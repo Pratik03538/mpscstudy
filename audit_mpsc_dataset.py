@@ -371,6 +371,26 @@ def main() -> int:
     safe_csv(cleaned_export, clean_path)
     safe_csv(question_dups, duplicate_path)
 
+    # Stable review partitions: clean PASS rows, unique review candidates,
+    # and structurally invalid source rows. Review candidates are already
+    # exact-deduplicated by question text using the Unicode-safe matcher.
+    pass_path = args.out / "pass_questions_only.csv"
+    review_queue_path = args.out / "review_queue_unique.csv"
+    invalid_path = args.out / "invalid_questions.csv"
+    pass_export = cleaned_export[cleaned_export["audit_status"] == "PASS"].copy()
+    review_export = cleaned_export[
+        cleaned_export["audit_status"] == "NEEDS_REVIEW"
+    ].copy()
+    invalid_export = full[full["audit_status"] == "INVALID"].copy()
+    safe_csv(pass_export, pass_path)
+    safe_csv(review_export, review_queue_path)
+    safe_csv(invalid_export, invalid_path)
+    print(
+        f"[REVIEW QUEUE] PASS={len(pass_export):,} | "
+        f"NEEDS_REVIEW_UNIQUE={len(review_export):,} | INVALID={len(invalid_export):,}",
+        flush=True,
+    )
+
     structured_db_path = args.out.parent / "mpsc_questions_structured.db"
     print("\n[STRUCTURE] Building normalized subject/subtopic database...", flush=True)
     structured_stats = build_structured_outputs(
@@ -475,6 +495,9 @@ def main() -> int:
         "outputs": {
             "question_level_audit": audit_path.name,
             "cleaned_questions_candidate": clean_path.name,
+            "pass_questions_only": pass_path.name,
+            "review_queue_unique": review_queue_path.name,
+            "invalid_questions": invalid_path.name,
             "duplicate_questions": duplicate_path.name,
             "missingness_report": "missingness_report.csv",
             "subject_topic_summary": "subject_topic_summary.csv",
