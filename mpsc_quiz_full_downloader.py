@@ -358,10 +358,11 @@ def valid_question(item: dict) -> bool:
         return False
     if not all(clean_text(item.get(f"option_{letter}")) for letter in "abcd"):
         return False
-    correct = clean_text(item.get("correct_option")).replace(" ", "_")
+    correct = re.sub(r"[^a-z0-9]", "", clean_text(item.get("correct_option")))
     valid_answers = {
         "a", "b", "c", "d", "1", "2", "3", "4",
-        "option_a", "option_b", "option_c", "option_d",
+        "optiona", "optionb", "optionc", "optiond",
+        "option1", "option2", "option3", "option4",
     }
     return correct in valid_answers
 
@@ -917,7 +918,7 @@ def parse_args() -> argparse.Namespace:
         "--stall-rounds",
         type=int,
         default=DEFAULT_STALL_ROUNDS,
-        help=f"Stop a filter after this many consecutive calls add zero new IDs (default: {DEFAULT_STALL_ROUNDS}).",
+        help=f"Stop a filter after this many consecutive calls add zero new valid, unique questions (default: {DEFAULT_STALL_ROUNDS}).",
     )
     parser.add_argument(
         "--delay",
