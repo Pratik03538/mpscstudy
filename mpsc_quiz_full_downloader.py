@@ -6,11 +6,12 @@ in SQLite, deduplicates by question ID, and exports CSV + JSONL.
 
 The endpoint has so far returned changing 100-record samples for identical
 subject queries, and no documented page/offset cursor was found in the frontend.
-This collector therefore re-samples conservatively until repeated calls add no
-new IDs, with a hard per-filter call cap. This is a practical harvest, not a
-mathematical proof of completeness. If the endpoint does not expose all records,
-request an official database export or documented pagination contract from the
-site administrator.
+This collector re-samples until repeated calls add no new valid, unique question
+content. Existing IDs and exact question+option duplicates are skipped. Each run
+backs up the current SQLite database, removes malformed rows and exact duplicates,
+then resumes. The default per-filter call cap is unlimited; repeated zero-new
+samples pause that filter to avoid an endless loop. This is still not a mathematical
+proof of completeness if the API exposes only rotating samples without pagination.
 
 No POST requests or answer submissions are made.
 """
@@ -18,11 +19,15 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
+import html
 import json
 import logging
+import re
 import sqlite3
 import sys
 import time
+import unicodedata
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,8 +46,8 @@ REQUEST_TIMEOUT = 30
 PAGE_DELAY_SECONDS = 0.5
 API_LIMIT = 100
 DEFAULT_API_DELAY = 2.0
-DEFAULT_MAX_CALLS = 250
-DEFAULT_STALL_ROUNDS = 8
+DEFAULT_MAX_CALLS = 0  # 0 means unlimited; stop only after repeated zero-new samples.
+DEFAULT_STALL_ROUNDS = 20
 DEFAULT_MAX_PAGES = 500
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -54,6 +59,7 @@ JSONL_PATH = EXPORT_DIR / "questions.jsonl"
 
 QUESTION_FIELDS = (
     "id",
+    "content_hash",
     "subject_id",
     "topic_id",
     "question_mr",
@@ -85,7 +91,7 @@ QUESTION_FIELDS = (
 )
 
 TEXT_FIELDS = {
-    "id", "question_mr", "question_en", "option_a", "option_b",
+    "id", "content_hash", "question_mr", "question_en", "option_a", "option_b",
     "option_c", "option_d", "correct_option", "explanation_mr",
     "explanation_en", "pyq_exam", "created_at", "updated_at",
     "last_pushed_to_tg", "subject_slug", "subject_name_en",
@@ -173,6 +179,11 @@ def init_db() -> sqlite3.Connection:
         + ", ".join(columns)
         + ")"
     )
+    existing_columns = {
+        row[1] for row in con.execute("PRAGMA table_info(questions)").fetchall()
+    }
+    if "content_hash" not in existing_columns:
+        con.execute('ALTER TABLE questions ADD COLUMN "content_hash" TEXT')
     con.execute("""
         CREATE TABLE IF NOT EXISTS harvest_filters (
             filter_key TEXT PRIMARY KEY,
@@ -316,41 +327,157 @@ def register_filter(con: sqlite3.Connection, key: str, config: dict) -> sqlite3.
     ).fetchone()
 
 
+def clean_text(value: object) -> str:
+    """Normalize text for exact-content duplicate detection."""
+    raw = html.unescape(str(value or ""))
+    plain = BeautifulSoup(raw, "html.parser").get_text(" ", strip=True)
+    plain = unicodedata.normalize("NFKC", plain).casefold()
+    return re.sub(r"\s+", " ", plain).strip()
+
+
+def content_fingerprint(item: dict) -> str:
+    """Hash the question and all four options; translations use a stable fallback."""
+    question = clean_text(item.get("question_mr")) or clean_text(item.get("question_en"))
+    options = [
+        clean_text(item.get("option_a")),
+        clean_text(item.get("option_b")),
+        clean_text(item.get("option_c")),
+        clean_text(item.get("option_d")),
+    ]
+    if not question or not all(options):
+        return ""
+    payload = json.dumps([question, *options], ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def valid_question(item: dict) -> bool:
+    """Reject structurally broken MCQs while allowing Marathi-only or English-only records."""
+    if item.get("id") is None or not str(item.get("id")).strip():
+        return False
+    if not (clean_text(item.get("question_mr")) or clean_text(item.get("question_en"))):
+        return False
+    if not all(clean_text(item.get(f"option_{letter}")) for letter in "abcd"):
+        return False
+    correct = clean_text(item.get("correct_option")).replace(" ", "_")
+    valid_answers = {
+        "a", "b", "c", "d", "1", "2", "3", "4",
+        "option_a", "option_b", "option_c", "option_d",
+    }
+    return correct in valid_answers
+
+
+def clean_existing_database(con: sqlite3.Connection) -> tuple[int, int, str | None]:
+    """
+    Back up the current DB, then remove malformed rows and exact content duplicates.
+    For duplicate groups, retain the most complete row.
+    """
+    total = con.execute("SELECT COUNT(*) FROM questions").fetchone()[0]
+    if not total:
+        con.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_questions_content_hash "
+            "ON questions(content_hash) WHERE content_hash IS NOT NULL AND content_hash <> ''"
+        )
+        con.commit()
+        print("[CLEANUP] Database is empty; unique-content protection is ready.", flush=True)
+        return 0, 0, None
+
+    backup_path = DB_PATH.with_name(
+        f"{DB_PATH.stem}.backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}{DB_PATH.suffix}"
+    )
+    backup_con = sqlite3.connect(backup_path)
+    try:
+        con.backup(backup_con)
+    finally:
+        backup_con.close()
+    print(f"[BACKUP] Existing database safely copied to: {backup_path}", flush=True)
+
+    rows = con.execute("SELECT * FROM questions ORDER BY rowid").fetchall()
+    groups: dict[str, list[dict]] = {}
+    invalid_ids: list[str] = []
+
+    def completeness_score(row: dict) -> int:
+        fields = (
+            "question_en", "explanation_mr", "explanation_en",
+            "pyq_exam", "pyq_year", "difficulty", "subject_name_mr",
+            "topic_name_mr",
+        )
+        return sum(1 for field in fields if row.get(field) not in (None, ""))
+
+    for sqlite_row in rows:
+        row = dict(sqlite_row)
+        qid = str(row.get("id") or "").strip()
+        if not qid or not valid_question(row):
+            if qid:
+                invalid_ids.append(qid)
+            else:
+                invalid_ids.append("")
+            continue
+        fingerprint = content_fingerprint(row)
+        if not fingerprint:
+            invalid_ids.append(qid)
+            continue
+        groups.setdefault(fingerprint, []).append(row)
+
+    keep_rows: list[tuple[str, str]] = []
+    duplicate_ids: list[str] = []
+    for fingerprint, group in groups.items():
+        group.sort(
+            key=lambda item: (
+                completeness_score(item),
+                str(item.get("first_seen_at") or ""),
+                str(item.get("id") or ""),
+            ),
+            reverse=True,
+        )
+        winner = group[0]
+        keep_rows.append((str(winner["id"]), fingerprint))
+        duplicate_ids.extend(str(item["id"]) for item in group[1:])
+
+    con.execute("CREATE TEMP TABLE IF NOT EXISTS _mpsc_keep_ids (id TEXT PRIMARY KEY, fingerprint TEXT)")
+    con.execute("DELETE FROM _mpsc_keep_ids")
+    con.executemany("INSERT INTO _mpsc_keep_ids(id, fingerprint) VALUES (?, ?)", keep_rows)
+    con.execute(
+        "DELETE FROM questions WHERE id NOT IN (SELECT id FROM _mpsc_keep_ids)"
+    )
+    con.execute(
+        """UPDATE questions
+           SET content_hash = (
+               SELECT fingerprint FROM _mpsc_keep_ids
+               WHERE _mpsc_keep_ids.id = questions.id
+           )"""
+    )
+    con.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_questions_content_hash "
+        "ON questions(content_hash) WHERE content_hash IS NOT NULL AND content_hash <> ''"
+    )
+    con.commit()
+
+    removed = len(invalid_ids) + len(duplicate_ids)
+    print(
+        f"[CLEANUP DONE] before={total:,} | kept={len(keep_rows):,} | "
+        f"corrupted_removed={len(invalid_ids):,} | content_duplicates_removed={len(duplicate_ids):,} | "
+        f"after={database_question_count(con):,}",
+        flush=True,
+    )
+    return len(invalid_ids), len(duplicate_ids), str(backup_path)
+
+
 def insert_questions(
     con: sqlite3.Connection,
     records: list[dict],
     subject_filter: str,
     topic_filter: str,
 ) -> tuple[int, int]:
-    inserted = 0
+    """Insert only valid, previously unseen IDs and unseen exact question+option content."""
+    prepared: list[tuple[dict, str, str]] = []
     rejected = 0
-    now = utc_now()
-    columns = list(QUESTION_FIELDS) + ["raw_json", "first_seen_at", "last_seen_at"]
-    quoted_columns = ", ".join(f'"{name}"' for name in columns)
-    placeholders = ", ".join("?" for _ in columns)
-    updates = []
-    for field in QUESTION_FIELDS:
-        if field == "id":
-            continue
-        updates.append(
-            f'"{field}"=COALESCE(excluded."{field}", questions."{field}")'
-        )
-    updates.extend([
-        '"raw_json"=excluded."raw_json"',
-        '"last_seen_at"=excluded."last_seen_at"',
-    ])
-    sql = (
-        f"INSERT INTO questions ({quoted_columns}) VALUES ({placeholders}) "
-        f"ON CONFLICT(id) DO UPDATE SET {', '.join(updates)}"
-    )
+    batch_ids: set[str] = set()
+    batch_hashes: set[str] = set()
 
-    values_to_write = []
     for item in records:
-        qid = item.get("id")
-        if qid is None or str(qid).strip() == "":
+        if not valid_question(item):
             rejected += 1
             continue
-
         item_subject = str(item.get("subject_slug") or "").strip().lower()
         item_topic = str(item.get("topic_slug") or "").strip().lower()
         if item_subject and item_subject != subject_filter:
@@ -360,43 +487,69 @@ def insert_questions(
             rejected += 1
             continue
 
-        row = []
+        qid = str(item["id"]).strip()
+        fingerprint = content_fingerprint(item)
+        if not fingerprint or qid in batch_ids or fingerprint in batch_hashes:
+            rejected += 1
+            continue
+        batch_ids.add(qid)
+        batch_hashes.add(fingerprint)
+        prepared.append((item, qid, fingerprint))
+
+    if not prepared:
+        return 0, rejected
+
+    ids = [qid for _, qid, _ in prepared]
+    hashes = [fingerprint for _, _, fingerprint in prepared]
+    existing_ids: set[str] = set()
+    existing_hashes: set[str] = set()
+    for start in range(0, len(ids), 800):
+        chunk = ids[start:start + 800]
+        placeholders = ",".join("?" for _ in chunk)
+        existing_ids.update(
+            str(row[0]) for row in con.execute(
+                f"SELECT id FROM questions WHERE id IN ({placeholders})", chunk
+            ).fetchall()
+        )
+    for start in range(0, len(hashes), 800):
+        chunk = hashes[start:start + 800]
+        placeholders = ",".join("?" for _ in chunk)
+        existing_hashes.update(
+            str(row[0]) for row in con.execute(
+                f"SELECT content_hash FROM questions WHERE content_hash IN ({placeholders})",
+                chunk,
+            ).fetchall()
+        )
+
+    columns = list(QUESTION_FIELDS) + ["raw_json", "first_seen_at", "last_seen_at"]
+    quoted_columns = ", ".join(f'"{name}"' for name in columns)
+    placeholders = ", ".join("?" for _ in columns)
+    sql = f"INSERT OR IGNORE INTO questions ({quoted_columns}) VALUES ({placeholders})"
+    now = utc_now()
+    inserted = 0
+
+    for item, qid, fingerprint in prepared:
+        # Existing IDs and exact content are deliberately left untouched.
+        if qid in existing_ids or fingerprint in existing_hashes:
+            continue
+        values = []
         for field in QUESTION_FIELDS:
-            value = item.get(field)
+            value = fingerprint if field == "content_hash" else item.get(field)
             if value is not None and field in TEXT_FIELDS:
                 value = str(value)
-            row.append(value)
-        row.extend([
+            values.append(value)
+        values.extend([
             json.dumps(item, ensure_ascii=False, separators=(",", ":")),
             now,
             now,
         ])
-        values_to_write.append(tuple(row))
+        cursor = con.execute(sql, values)
+        if cursor.rowcount:
+            inserted += 1
+            existing_ids.add(qid)
+            existing_hashes.add(fingerprint)
 
-    before = con.total_changes
-    if values_to_write:
-        con.executemany(sql, values_to_write)
-    changed = con.total_changes - before
-
-    # Count genuinely new IDs separately from updates to existing IDs.
-    inserted_ids = {
-        str(item.get("id"))
-        for item in records
-        if item.get("id") is not None
-        and str(item.get("subject_slug") or subject_filter).strip().lower() == subject_filter
-        and (
-            not topic_filter
-            or not str(item.get("topic_slug") or topic_filter).strip().lower()
-            or str(item.get("topic_slug") or "").strip().lower() == topic_filter
-        )
-    }
-    # SQLite total_changes includes updates; use a pre-insert existence check.
-    new_count = 0
-    for qid in inserted_ids:
-        # The caller records IDs before insertion in normal operation. This fallback
-        # is intentionally replaced by exact change tracking in harvest_filter().
-        pass
-    return changed, rejected
+    return inserted, rejected
 
 
 def collect_one_filter(
@@ -410,11 +563,7 @@ def collect_one_filter(
     stall_rounds: int,
 ) -> tuple[int, bool]:
     state = register_filter(con, key, config)
-    if state["status"] == "no_data":
-        logging.info("Skipping filter with confirmed empty response: %s", key)
-        print(f"[SKIP] {key} | previous API response contained no records.", flush=True)
-        return 0, False
-    if state["status"] in {"complete", "stalled_no_new", "max_calls_reached"}:
+    if state["status"] in {"complete", "stalled_no_new", "max_calls_reached", "no_data"}:
         # A previous no-new streak is not proof that the complete bank was downloaded.
         con.execute(
             """UPDATE harvest_filters
@@ -444,23 +593,24 @@ def collect_one_filter(
         flush=True,
     )
     print(
-        f"[PROGRESS] Bar below tracks API calls used out of {max_calls}; "
-        "it is not a percentage of the site's full question bank.",
+        f"[PROGRESS] API call cap={'unlimited' if max_calls == 0 else max_calls} | "
+        f"stop after {stall_rounds} consecutive calls add zero new valid questions.",
         flush=True,
     )
     logging.info(
-        "Starting harvest: subject=%s topic=%s max_calls_this_run=%s",
-        subject, topic or "<all topics>", max_calls,
+        "Starting harvest: subject=%s topic=%s max_calls_this_run=%s stall_rounds=%s",
+        subject, topic or "<all topics>", ("unlimited" if max_calls == 0 else max_calls), stall_rounds,
     )
     calls_this_run = 0
     total_new_this_run = 0
     global_stop = False
 
-    for attempt in range(1, max_calls + 1):
+    attempt = 1
+    while max_calls == 0 or calls_this_run < max_calls:
         if not robots.can_fetch(USER_AGENT, API_URL):
             raise RuntimeError("robots.txt disallows API URL; stopping.")
         print(
-            f"[REQUEST] {key} | API call {attempt}/{max_calls} | "
+            f"[REQUEST] {key} | API call {attempt} | "
             f"requesting up to {API_LIMIT} records...",
             flush=True,
         )
@@ -564,19 +714,7 @@ def collect_one_filter(
             if item.get("id") is not None:
                 accepted.append(item)
 
-        ids = [str(item["id"]) for item in accepted]
-        existing_ids = set()
-        if ids:
-            for start in range(0, len(ids), 800):
-                chunk = ids[start:start + 800]
-                placeholders = ",".join("?" for _ in chunk)
-                existing_ids.update(
-                    row[0] for row in con.execute(
-                        f"SELECT id FROM questions WHERE id IN ({placeholders})", chunk
-                    ).fetchall()
-                )
-        new_count = len(set(ids) - existing_ids)
-        _, rejected_count = insert_questions(con, records, subject, topic)
+        new_count, rejected_count = insert_questions(con, records, subject, topic)
 
         state = con.execute(
             "SELECT * FROM harvest_filters WHERE filter_key=?", (key,)
@@ -629,10 +767,9 @@ def collect_one_filter(
 
         total_new_this_run += new_count
         current_total = database_question_count(con)
-        request_bar = progress_bar(attempt, max_calls)
         new_per_second = (new_count / request_seconds) if request_seconds > 0 else 0.0
         print(
-            f"{request_bar} | {key} | HTTP {response.status_code} | "
+            f"[CALL {attempt}] | {key} | HTTP {response.status_code} | "
             f"received={len(records)} | NEW +{new_count} | "
             f"DB TOTAL={current_total} | {len(response.content):,} bytes | "
             f"{request_seconds:.2f}s | new-rate={new_per_second:.1f}/s",
@@ -664,9 +801,10 @@ def collect_one_filter(
                 flush=True,
             )
             break
+        attempt += 1
         time.sleep(delay)
 
-    if calls_this_run >= max_calls:
+    if max_calls > 0 and calls_this_run >= max_calls:
         current = con.execute(
             "SELECT status FROM harvest_filters WHERE filter_key=?", (key,)
         ).fetchone()
@@ -773,7 +911,7 @@ def parse_args() -> argparse.Namespace:
         "--max-calls",
         type=int,
         default=DEFAULT_MAX_CALLS,
-        help=f"Maximum API calls per filter in this run (default: {DEFAULT_MAX_CALLS}).",
+        help="Optional safety cap per filter; 0 (default) means unlimited.",
     )
     parser.add_argument(
         "--stall-rounds",
@@ -804,14 +942,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if args.max_calls < 1 or args.stall_rounds < 1 or args.delay < 0 or args.max_pages < 1:
-        raise SystemExit("All limits must be positive (delay may be zero).")
+    if args.max_calls < 0 or args.stall_rounds < 1 or args.delay < 0 or args.max_pages < 1:
+        raise SystemExit("max-calls must be 0 (unlimited) or positive; other limits must be valid.")
 
     session = make_session()
     robots = load_robots(session)
     print("[START] MPSC Today authorized question collection", flush=True)
     print(
-        f"[SETTINGS] API batch={API_LIMIT} | max calls/filter={args.max_calls} | "
+        f"[SETTINGS] API batch={API_LIMIT} | max calls/filter="
+        f"{'UNLIMITED' if args.max_calls == 0 else args.max_calls} | "
         f"delay={args.delay:.2f}s | stall rounds={args.stall_rounds}",
         flush=True,
     )
@@ -831,6 +970,7 @@ def main() -> int:
     con = init_db()
     stop_all = False
     try:
+        clean_existing_database(con)
         total_filters = len(filters)
         for index, (key, config) in enumerate(sorted(filters.items()), start=1):
             logging.info("FILTER %s/%s: %s", index, total_filters, key)
