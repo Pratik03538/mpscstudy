@@ -295,7 +295,10 @@ def main() -> int:
     core_unique = core_nonempty.drop_duplicates("content_fingerprint", keep="first")
     no_fingerprint = core[core["content_fingerprint"] == ""]
     cleaned = pd.concat([core_unique, no_fingerprint], ignore_index=True)
-    cleaned.drop(columns=["_completeness_score"], inplace=True, errors="ignore")
+    cleaned = cleaned.drop(columns=["_completeness_score"], errors="ignore")
+    structurally_invalid_rows_excluded = int(len(full) - len(core))
+    valid_exact_duplicate_rows_removed = int(len(core_nonempty) - len(core_unique))
+    valid_rows_without_fingerprint_retained = int(len(no_fingerprint))
 
     audit_path = args.out / "question_level_audit.csv"
     clean_path = args.out / "cleaned_questions_candidate.csv"
@@ -315,7 +318,7 @@ def main() -> int:
     safe_csv(exact_dups, duplicate_path)
 
     structured_db_path = args.out.parent / "mpsc_questions_structured.db"
-    print("\\n[STRUCTURE] Building normalized subject/subtopic database...", flush=True)
+    print("\n[STRUCTURE] Building normalized subject/subtopic database...", flush=True)
     structured_stats = build_structured_outputs(
         cleaned_export,
         args.out,
@@ -396,7 +399,11 @@ def main() -> int:
         "audit_status_counts": {str(key): int(value) for key, value in status_counts.items()},
         "structurally_valid_rows_before_exact_dedup": int(full["is_structurally_valid"].sum()),
         "cleaned_candidate_rows_after_exact_dedup": int(len(cleaned)),
-        "exact_duplicate_rows_flagged": int(len(exact_dups)),
+        "exact_duplicate_rows_flagged_all_audit_rows": int(len(exact_dups)),
+        "structurally_invalid_rows_excluded": structurally_invalid_rows_excluded,
+        "valid_exact_duplicate_rows_removed_from_candidate": valid_exact_duplicate_rows_removed,
+        "valid_rows_without_fingerprint_retained": valid_rows_without_fingerprint_retained,
+        "duplicate_count_note": "exact_duplicate_rows_flagged_all_audit_rows includes every repeated fingerprint group in the full audit, including structurally invalid rows; only repeated fingerprints among structurally valid rows are removed from the cleaned candidate.",
         "near_duplicate_pairs_found": int(similar_count),
         "near_duplicate_threshold": args.similarity,
         "structured_database": {
@@ -443,7 +450,10 @@ def main() -> int:
     print(f"PASS:                                 {status_counts.get('PASS', 0):,}")
     print(f"NEEDS REVIEW:                         {status_counts.get('NEEDS_REVIEW', 0):,}")
     print(f"INVALID structure:                    {status_counts.get('INVALID', 0):,}")
-    print(f"Exact duplicate rows flagged:         {len(exact_dups):,}")
+    print(f"Exact duplicate rows flagged (all):   {len(exact_dups):,}")
+    print(f"Invalid rows excluded:                {structurally_invalid_rows_excluded:,}")
+    print(f"Valid duplicate rows removed:         {valid_exact_duplicate_rows_removed:,}")
+    print(f"Valid rows without fingerprint kept: {valid_rows_without_fingerprint_retained:,}")
     print(f"Clean candidate rows:                 {len(cleaned):,}")
     print(f"Near-duplicate candidate pairs:       {similar_count:,}")
     print(f"Structured SQLite database:           {structured_stats['database_path']}")
