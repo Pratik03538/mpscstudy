@@ -562,23 +562,46 @@ def collect_one_filter(
     delay: float,
     max_calls: int,
     stall_rounds: int,
+    resample_finished: bool,
 ) -> tuple[int, bool]:
     state = register_filter(con, key, config)
-    if state["status"] in {"complete", "stalled_no_new", "max_calls_reached", "no_data"}:
-        # A previous no-new streak is not proof that the complete bank was downloaded.
+
+    # Terminal filters are checkpointed. Skip them on normal reruns so earlier
+    # subjects are not sampled again; --resample-finished explicitly reopens them.
+    terminal_statuses = {"complete", "stalled_no_new", "no_data"}
+    if state["status"] in terminal_statuses and not resample_finished:
+        print(
+            f"[CHECKPOINT SKIP] {key} | status={state['status']} | "
+            f"saved API calls={state['api_calls']} | saved new IDs={state['new_rows']}. "
+            "Use --resample-finished to sample this filter again.",
+            flush=True,
+        )
+        return 0, False
+
+    if state["status"] in terminal_statuses or state["status"] in {
+        "max_calls_reached", "paused_error", "paused_rate_limit",
+        "paused_http_error", "paused_invalid_response",
+    }:
+        prior_no_new = 0 if (resample_finished and state["status"] in terminal_statuses) else state["consecutive_no_new"]
         con.execute(
             """UPDATE harvest_filters
-               SET status='running', consecutive_no_new=0, updated_at=?
+               SET status='running', consecutive_no_new=?, updated_at=?
                WHERE filter_key=?""",
-            (utc_now(), key),
+            (prior_no_new, utc_now(), key),
         )
         con.commit()
         state = con.execute(
             "SELECT * FROM harvest_filters WHERE filter_key=?", (key,)
         ).fetchone()
         print(
-            f"[RESUME] {key} | starting a fresh sample pass; earlier no-new calls "
-            "were not treated as proof of full completeness.",
+            f"[CHECKPOINT RESUME] {key} | lifetime API calls={state['api_calls']} | "
+            f"saved new IDs={state['new_rows']} | no-new streak={state['consecutive_no_new']}",
+            flush=True,
+        )
+    else:
+        print(
+            f"[CHECKPOINT CONTINUE] {key} | lifetime API calls={state['api_calls']} | "
+            f"saved new IDs={state['new_rows']} | no-new streak={state['consecutive_no_new']}",
             flush=True,
         )
 
@@ -606,7 +629,9 @@ def collect_one_filter(
     total_new_this_run = 0
     global_stop = False
 
-    attempt = 1
+    # api_calls increments only after a successful JSON response is persisted.
+    # An interrupted in-flight request is safely retried on the next run.
+    attempt = int(state["api_calls"]) + 1
     while max_calls == 0 or calls_this_run < max_calls:
         if not robots.can_fetch(USER_AGENT, API_URL):
             raise RuntimeError("robots.txt disallows API URL; stopping.")
@@ -938,6 +963,11 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Optional subject slug to collect only one subject (for example: history).",
     )
+    parser.add_argument(
+        "--resample-finished",
+        action="store_true",
+        help="Reopen filters previously paused after zero-new samples or empty responses.",
+    )
     return parser.parse_args()
 
 
@@ -952,7 +982,8 @@ def main() -> int:
     print(
         f"[SETTINGS] API batch={API_LIMIT} | max calls/filter="
         f"{'UNLIMITED' if args.max_calls == 0 else args.max_calls} | "
-        f"delay={args.delay:.2f}s | stall rounds={args.stall_rounds}",
+        f"delay={args.delay:.2f}s | stall rounds={args.stall_rounds} | "
+        f"resample-finished={args.resample_finished}",
         flush=True,
     )
     filters = discover_quiz_filters(session, robots, args.max_pages)
@@ -989,6 +1020,7 @@ def main() -> int:
                 delay=args.delay,
                 max_calls=args.max_calls,
                 stall_rounds=args.stall_rounds,
+                resample_finished=args.resample_finished,
             )
             export_database(con)
             if stop_all:
