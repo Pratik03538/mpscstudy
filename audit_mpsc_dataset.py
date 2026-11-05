@@ -58,8 +58,18 @@ def text_value(value: Any) -> str:
 
 
 def normalize_for_match(value: Any) -> str:
+    """Normalize text for matching without dropping Indic-script vowel signs.
+
+    Devanagari vowel signs, virama, anusvara and other combining marks are
+    Unicode category M characters. They are not alphanumeric, so filtering
+    only with str.isalnum() silently removes them and can collapse distinct
+    Marathi words/options into the same fingerprint.
+    """
     value = text_value(value).casefold()
-    return "".join(ch for ch in value if ch.isalnum())
+    return "".join(
+        ch for ch in value
+        if ch.isalnum() or unicodedata.category(ch).startswith("M")
+    )
 
 
 def normalized_correct_option(value: Any) -> str:
