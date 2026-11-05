@@ -1,12 +1,13 @@
 # MPSC Study
 
-Python project for building a structured catalogue of MPSC learning resources and auditing publicly visible quiz interfaces.
+Python project for building a structured catalogue of MPSC learning resources and integrating quiz data where authorized.
 
 ## Current modules
 
-- `main.py` — resumable, robots.txt-aware public catalogue scanner. Reuses the local `mpsc_output/mpsc_catalog.db` database and records page/link/resource metadata.
-- `mpsc_quiz_audit.py` — audits only known `/quiz/` pages from the catalogue and records page metadata, visible quiz controls, links, and script/iframe asset URLs.
-- `mpsc_quiz_api_discovery.py` — opens a quiz page in a visible Playwright browser and records same-site Fetch/XHR request metadata while a person manually operates the page.
+- `main.py` — resumable, robots.txt-aware public catalogue scanner.
+- `mpsc_quiz_audit.py` — audits known quiz pages and records page metadata, visible quiz controls, links, and assets.
+- `mpsc_quiz_api_discovery.py` — observes normal browser-driven quiz API requests and records safe request/response schema metadata.
+- `mpsc_quiz_api_contract_inspector.py` — inspects the quiz page's same-origin JavaScript assets for API action and pagination implementation hints. It does not call the question API.
 
 ## Setup (Windows / PyCharm)
 
@@ -19,16 +20,16 @@ Python project for building a structured catalogue of MPSC learning resources an
 
 - Catalogue scan: `python main.py`
 - Quiz-only audit: `python mpsc_quiz_audit.py`
-- Interactive network metadata capture: `python mpsc_quiz_api_discovery.py`
-- Optional quiz URL argument: `python mpsc_quiz_api_discovery.py https://www.mpsctoday.com/quiz/history/`
+- Interactive API metadata capture: `python mpsc_quiz_api_discovery.py`
+- Inspect frontend API contract: `python mpsc_quiz_api_contract_inspector.py`
 
 ## Local data
 
-Runtime databases, CSV exports, and network audit files are stored under `mpsc_output/` and are intentionally excluded from Git. Keep your existing local `mpsc_output/mpsc_catalog.db` in the project folder; do not delete it when updating code.
+Runtime databases, CSV exports, and API audit reports are stored under `mpsc_output/` and are intentionally excluded from Git. Keep local databases and exports out of the public repository.
 
-## Important usage boundary
+## Authorized data use
 
-These modules are for public-page catalogue discovery and quiz-interface/network metadata inspection. They do not bulk-copy question text, options, answers, explanations, protected files, cookies, authorization headers, or response payloads. The MPSC Today policy text has conflicting statements about reuse and copying; obtain written permission before bulk-importing its question-bank content. Follow robots.txt, site terms, and any rate limits.
+Use the quiz integration/import modules only within the scope of the written permission obtained from the website administrator. Follow any stated limits, attribution requirements, rate limits, and retention conditions. Do not bypass authentication or access controls. Keep credentials, cookies, local databases, and private exports out of Git.
 
 ## Git
 
