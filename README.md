@@ -33,6 +33,7 @@ Python project for building a structured catalogue of MPSC learning resources an
 - Download quiz questions (no Chrome): `python mpsc_quiz_full_downloader.py` (unlimited calls by default; resumes interrupted filters from the saved SQLite checkpoint and skips filters previously paused as empty/stalled).
 - Re-sample previously stalled/empty filters explicitly: `python mpsc_quiz_full_downloader.py --resample-finished`.
 - Run the complete audit + cleaning + sorting + normalized DB build in one command: `python audit_mpsc_dataset.py`.
+- After the audit has already completed, upload existing local reports/database without repeating the analysis: `python github_report_sync.py`.
 - Skip TF-IDF near-duplicate similarity for a faster run: `python audit_mpsc_dataset.py --similarity 0`.
 - Use a non-default source database/output directory: `python audit_mpsc_dataset.py --db path/to/mpsc_questions.db --out path/to/audit_output`.
 - Audit CSV/JSON reports and sorted exports are written under `mpsc_output/data_quality_audit/`; the new normalized DB is `mpsc_output/mpsc_questions_structured.db`.
