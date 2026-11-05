@@ -3,8 +3,8 @@
 No browser or manual clicks are used. The script:
 1) fetches the public History quiz page,
 2) inspects same-origin JavaScript for API action/pagination implementation hints,
-3) performs three low-volume GET probes with action=questions, subject=history,
-   and limit=15/30/60,
+3) performs five sequential GET probes with action=questions, subject=history,
+   and limit=120/250/500/1000/2000,
 4) stores only response counts, array sizes, object field names, and source snippets.
 
 It does NOT save question text, options, answers, explanations, cookies, tokens,
@@ -29,7 +29,7 @@ PAGE_URL = "https://www.mpsctoday.com/quiz/history/"
 API_URL = "https://www.mpsctoday.com/api/quiz/index.php"
 SUBJECT = "history"
 KNOWN_ACTION = "questions"
-LIMIT_PROBES = (15, 30, 60)
+LIMIT_PROBES = (120, 250, 500, 1000, 2000)
 
 BASE_HOSTS = {"mpsctoday.com", "www.mpsctoday.com"}
 API_MARKER = "/api/quiz/index.php"
@@ -168,11 +168,19 @@ def summarize_question_response(payload) -> dict:
     if isinstance(data, list) and data and isinstance(data[0], dict):
         first_keys = sorted(data[0].keys())
     count = payload.get("count")
+    ids = []
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict) and item.get("id") is not None:
+                ids.append(str(item["id"])[:40])
     return {
         "success": payload.get("success") if isinstance(payload.get("success"), bool) else None,
         "count_value": count if isinstance(count, (int, float)) else None,
         "data_type": type(data).__name__,
         "returned_items": len(data) if isinstance(data, list) else None,
+        "unique_id_count": len(set(ids)),
+        "first_ids": ids[:5],
+        "last_ids": ids[-5:],
         "first_item_field_names": first_keys,
     }
 
@@ -183,8 +191,21 @@ def probe_api(session: requests.Session, robots: RobotFileParser) -> list[dict]:
     reports = []
     for limit in LIMIT_PROBES:
         params = {"action": KNOWN_ACTION, "limit": limit, "subject": SUBJECT}
-        response = session.get(API_URL, params=params, timeout=TIMEOUT)
-        response.raise_for_status()
+        try:
+            response = session.get(API_URL, params=params, timeout=TIMEOUT)
+        except requests.RequestException as exc:
+            reports.append({
+                "subject": SUBJECT,
+                "action": KNOWN_ACTION,
+                "requested_limit": limit,
+                "http_status": None,
+                "content_type": "",
+                "response_bytes": 0,
+                "schema_summary": None,
+                "error": f"Request failed: {exc}",
+            })
+            break
+
         content_type = response.headers.get("Content-Type", "").lower()
         item = {
             "subject": SUBJECT,
@@ -196,7 +217,9 @@ def probe_api(session: requests.Session, robots: RobotFileParser) -> list[dict]:
             "schema_summary": None,
             "error": None,
         }
-        if "application/json" in content_type:
+        if response.status_code >= 400:
+            item["error"] = f"HTTP {response.status_code}"
+        elif "application/json" in content_type:
             try:
                 item["schema_summary"] = summarize_question_response(response.json())
             except ValueError:
@@ -211,6 +234,9 @@ def probe_api(session: requests.Session, robots: RobotFileParser) -> list[dict]:
             len(response.content),
             item["schema_summary"],
         )
+        if response.status_code in (429, 503):
+            logging.warning("Server requested backoff (HTTP %s); stopping probes.", response.status_code)
+            break
         time.sleep(DELAY)
     return reports
 
@@ -266,7 +292,8 @@ def main() -> int:
         print(
             f"limit={item['requested_limit']} -> HTTP {item['http_status']}, "
             f"returned={summary.get('returned_items')}, count={summary.get('count_value')}, "
-            f"bytes={item['response_bytes']}"
+            f"bytes={item['response_bytes']}, unique_ids={summary.get('unique_id_count')}, "
+            f"first_ids={summary.get('first_ids')}, last_ids={summary.get('last_ids')}"
         )
     print(f"Possible actions: {', '.join(frontend['possible_action_literals']) or 'none found'}")
     print(f"Pagination terms: {', '.join(frontend['pagination_terms_seen_in_source']) or 'none found'}")
