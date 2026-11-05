@@ -73,13 +73,70 @@ def get_question_text(row: dict[str, Any]) -> str:
     return text_value(row.get("question_mr")) or text_value(row.get("question_en"))
 
 
-def fingerprint(row: dict[str, Any]) -> str:
+def question_fingerprint(row: dict[str, Any]) -> str:
+    """Hash question text only; option text and answer key are deliberately excluded."""
     question = normalize_for_match(get_question_text(row))
-    options = [normalize_for_match(row.get(f"option_{letter}")) for letter in "abcd"]
-    if not question or not all(options):
+    if not question:
         return ""
-    payload = json.dumps([question, *options], ensure_ascii=False, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return hashlib.sha256(question.encode("utf-8")).hexdigest()
+
+
+def find_question_duplicate_groups(frame: pd.DataFrame) -> tuple[list[str], list[int]]:
+    """Group rows sharing the same Marathi OR English question text.
+
+    Question text only is compared. Options, correct answers and explanations are
+    never used as duplicate keys. Language prefixes avoid comparing Marathi text
+    directly with English text.
+    """
+    records = frame.to_dict(orient="records")
+    parent = list(range(len(records)))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        root_left, root_right = find(left), find(right)
+        if root_left != root_right:
+            parent[root_right] = root_left
+
+    first_for_text: dict[str, int] = {}
+    row_text_keys: list[list[str]] = []
+    for index, row in enumerate(records):
+        keys = []
+        for language, field in (("mr", "question_mr"), ("en", "question_en")):
+            normalized = normalize_for_match(row.get(field))
+            if normalized:
+                keys.append(language + ":" + normalized)
+        row_text_keys.append(keys)
+        for key in keys:
+            previous = first_for_text.get(key)
+            if previous is None:
+                first_for_text[key] = index
+            else:
+                union(index, previous)
+
+    components: dict[int, list[int]] = {}
+    for index in range(len(records)):
+        components.setdefault(find(index), []).append(index)
+
+    group_ids = [""] * len(records)
+    group_sizes = [1] * len(records)
+    for members in components.values():
+        if len(members) < 2:
+            continue
+        shared_keys = sorted({
+            key for member in members for key in row_text_keys[member]
+        })
+        group_id = "QG-" + hashlib.sha256(
+            "|".join(shared_keys).encode("utf-8")
+        ).hexdigest()[:20]
+        for member in members:
+            group_ids[member] = group_id
+            group_sizes[member] = len(members)
+    return group_ids, group_sizes
 
 
 def safe_csv(df: pd.DataFrame, path: Path) -> None:
@@ -113,10 +170,14 @@ def audit_row(row: dict[str, Any]) -> dict[str, Any]:
     if not correct_norm:
         errors.append("invalid_correct_option_label")
 
+    selected_answer_text = row.get(f"option_{correct_norm.lower()}") if correct_norm else None
+    if correct_norm and is_missing(selected_answer_text):
+        errors.append("missing_correct_answer_option_text")
+
     normalized_options = [normalize_for_match(row.get(f"option_{letter}")) for letter in "abcd"]
     nonempty_options = [option for option in normalized_options if option]
     if len(nonempty_options) != len(set(nonempty_options)):
-        errors.append("repeated_options_within_question")
+        warnings.append("repeated_options_within_question")
 
     text_blob = " ".join([question] + [
         text_value(row.get(f"option_{letter}")) for letter in "abcd"
@@ -125,32 +186,14 @@ def audit_row(row: dict[str, Any]) -> dict[str, Any]:
         warnings.append("possible_encoding_mojibake")
     if HTML_RE.search(text_blob):
         warnings.append("html_markup_in_text")
-    if is_missing(row.get("explanation_mr")) and is_missing(row.get("explanation_en")):
-        warnings.append("missing_explanation")
-    if is_missing(row.get("subject_slug")):
-        warnings.append("missing_subject_slug")
-    if is_missing(row.get("topic_slug")):
-        warnings.append("missing_topic_slug")
-
-    raw_json_valid = True
-    raw_json = row.get("raw_json")
-    if is_missing(raw_json):
-        raw_json_valid = False
-        warnings.append("missing_raw_json")
-    else:
-        try:
-            json.loads(str(raw_json))
-        except (TypeError, json.JSONDecodeError):
-            raw_json_valid = False
-            warnings.append("malformed_raw_json")
 
     return {
         "audit_status": "INVALID" if errors else ("NEEDS_REVIEW" if warnings else "PASS"),
         "audit_errors": ";".join(errors),
         "audit_warnings": ";".join(warnings),
         "correct_option_normalized": correct_norm,
-        "raw_json_valid": raw_json_valid,
-        "content_fingerprint": fingerprint(row),
+        "correct_answer_present": bool(correct_norm and not is_missing(selected_answer_text)),
+        "question_fingerprint": question_fingerprint(row),
         "is_structurally_valid": not errors,
     }
 
@@ -256,66 +299,67 @@ def main() -> int:
     audit = pd.DataFrame([audit_row(row) for row in df.to_dict(orient="records")])
     full = pd.concat([df.reset_index(drop=True), audit], axis=1)
 
-    # Identify every row in an exact-duplicate group; the candidate export keeps
-    # the most complete structurally valid representative from each group.
-    has_fp = full[full["content_fingerprint"] != ""]
-    duplicate_mask = has_fp.duplicated("content_fingerprint", keep=False)
-    exact_dups = has_fp[duplicate_mask].copy()
-    full["exact_duplicate_content"] = False
-    if not exact_dups.empty:
-        full.loc[exact_dups.index, "exact_duplicate_content"] = True
-        full.loc[exact_dups.index, "audit_warnings"] = full.loc[
-            exact_dups.index, "audit_warnings"
-        ].apply(lambda value: ";".join(filter(None, [str(value), "exact_duplicate_content"])))
-        full.loc[exact_dups.index, "audit_status"] = full.loc[
-            exact_dups.index, "audit_status"
+    # Duplicate detection compares question text only (Marathi OR English).
+    # Options, correct answers and explanations do not participate in matching.
+    group_ids, group_sizes = find_question_duplicate_groups(full)
+    full["question_duplicate_group"] = group_ids
+    full["question_duplicate_group_size"] = group_sizes
+    full["duplicate_question_text"] = full["question_duplicate_group"] != ""
+    question_dups = full[full["duplicate_question_text"]].copy()
+    if not question_dups.empty:
+        full.loc[question_dups.index, "audit_warnings"] = full.loc[
+            question_dups.index, "audit_warnings"
+        ].apply(lambda value: ";".join(filter(None, [str(value), "duplicate_question_text"])))
+        full.loc[question_dups.index, "audit_status"] = full.loc[
+            question_dups.index, "audit_status"
         ].replace({"PASS": "NEEDS_REVIEW"})
-
-    question_keys = full.apply(
-        lambda row: normalize_for_match(get_question_text(row.to_dict())), axis=1
-    )
-    full["same_question_text_group_size"] = (
-        question_keys.map(question_keys.value_counts()).fillna(0).astype(int)
-    )
 
     core = full[full["is_structurally_valid"]].copy()
     completeness_fields = [
         col for col in [
             "question_mr", "question_en", "option_a", "option_b", "option_c",
-            "option_d", "correct_option", "explanation_mr", "explanation_en",
-            "subject_slug", "topic_slug",
+            "option_d", "correct_option", "subject_slug", "topic_slug",
+            "subject_name_en", "subject_name_mr", "topic_name_en", "topic_name_mr",
         ] if col in core.columns
     ]
     core["_completeness_score"] = core.apply(
         lambda row: sum(not is_missing(row.get(col)) for col in completeness_fields), axis=1
     )
-    core_nonempty = core[core["content_fingerprint"] != ""].sort_values(
-        "_completeness_score", ascending=False
+    core = core.sort_values("_completeness_score", ascending=False, kind="mergesort")
+    core_duplicate_rows = core[core["question_duplicate_group"] != ""]
+    core_unique_duplicate_groups = core_duplicate_rows.drop_duplicates(
+        "question_duplicate_group", keep="first"
     )
-    core_unique = core_nonempty.drop_duplicates("content_fingerprint", keep="first")
-    no_fingerprint = core[core["content_fingerprint"] == ""]
-    cleaned = pd.concat([core_unique, no_fingerprint], ignore_index=True)
+    core_non_duplicates = core[core["question_duplicate_group"] == ""]
+    cleaned = pd.concat(
+        [core_unique_duplicate_groups, core_non_duplicates], ignore_index=True
+    )
     cleaned = cleaned.drop(columns=["_completeness_score"], errors="ignore")
     structurally_invalid_rows_excluded = int(len(full) - len(core))
-    valid_exact_duplicate_rows_removed = int(len(core_nonempty) - len(core_unique))
-    valid_rows_without_fingerprint_retained = int(len(no_fingerprint))
+    valid_duplicate_question_rows_removed = int(
+        len(core_duplicate_rows) - len(core_unique_duplicate_groups)
+    )
+    duplicate_question_groups_count = int(
+        question_dups["question_duplicate_group"].nunique()
+    )
 
     audit_path = args.out / "question_level_audit.csv"
     clean_path = args.out / "cleaned_questions_candidate.csv"
-    duplicate_path = args.out / "exact_duplicates.csv"
+    duplicate_path = args.out / "duplicate_questions.csv"
     safe_csv(full, audit_path)
     audit_columns = [
         "audit_status", "audit_errors", "audit_warnings",
         "correct_option_normalized", "is_structurally_valid",
-        "content_fingerprint", "exact_duplicate_content",
-        "same_question_text_group_size",
+        "question_fingerprint", "question_duplicate_group",
+        "question_duplicate_group_size", "duplicate_question_text",
+        "correct_answer_present",
     ]
     cleaned_export_columns = list(df.columns) + [
         column for column in audit_columns if column in cleaned.columns
     ]
     cleaned_export = cleaned[cleaned_export_columns].copy()
     safe_csv(cleaned_export, clean_path)
-    safe_csv(exact_dups, duplicate_path)
+    safe_csv(question_dups, duplicate_path)
 
     structured_db_path = args.out.parent / "mpsc_questions_structured.db"
     print("\n[STRUCTURE] Building normalized subject/subtopic database...", flush=True)
@@ -399,11 +443,11 @@ def main() -> int:
         "audit_status_counts": {str(key): int(value) for key, value in status_counts.items()},
         "structurally_valid_rows_before_exact_dedup": int(full["is_structurally_valid"].sum()),
         "cleaned_candidate_rows_after_exact_dedup": int(len(cleaned)),
-        "exact_duplicate_rows_flagged_all_audit_rows": int(len(exact_dups)),
+        "duplicate_question_rows_flagged_all_audit_rows": int(len(question_dups)),
         "structurally_invalid_rows_excluded": structurally_invalid_rows_excluded,
-        "valid_exact_duplicate_rows_removed_from_candidate": valid_exact_duplicate_rows_removed,
-        "valid_rows_without_fingerprint_retained": valid_rows_without_fingerprint_retained,
-        "duplicate_count_note": "exact_duplicate_rows_flagged_all_audit_rows includes every repeated fingerprint group in the full audit, including structurally invalid rows; only repeated fingerprints among structurally valid rows are removed from the cleaned candidate.",
+        "valid_duplicate_question_rows_removed_from_candidate": valid_duplicate_question_rows_removed,
+        "duplicate_question_groups_count": duplicate_question_groups_count,
+        "duplicate_count_note": "Duplicates are detected using question text only (Marathi OR English); options, correct-answer key and explanations are not compared. The candidate keeps one most-complete valid row per repeated question-text group.",
         "near_duplicate_pairs_found": int(similar_count),
         "near_duplicate_threshold": args.similarity,
         "structured_database": {
@@ -421,7 +465,7 @@ def main() -> int:
         "outputs": {
             "question_level_audit": audit_path.name,
             "cleaned_questions_candidate": clean_path.name,
-            "exact_duplicates": duplicate_path.name,
+            "duplicate_questions": duplicate_path.name,
             "missingness_report": "missingness_report.csv",
             "subject_topic_summary": "subject_topic_summary.csv",
             "answer_key_distribution": "answer_key_distribution.csv",
@@ -450,12 +494,13 @@ def main() -> int:
     print(f"PASS:                                 {status_counts.get('PASS', 0):,}")
     print(f"NEEDS REVIEW:                         {status_counts.get('NEEDS_REVIEW', 0):,}")
     print(f"INVALID structure:                    {status_counts.get('INVALID', 0):,}")
-    print(f"Exact duplicate rows flagged (all):   {len(exact_dups):,}")
+    print(f"Duplicate question rows flagged:      {len(question_dups):,}")
     print(f"Invalid rows excluded:                {structurally_invalid_rows_excluded:,}")
-    print(f"Valid duplicate rows removed:         {valid_exact_duplicate_rows_removed:,}")
-    print(f"Valid rows without fingerprint kept: {valid_rows_without_fingerprint_retained:,}")
+    print(f"Valid duplicate-question rows removed: {valid_duplicate_question_rows_removed:,}")
+    print(f"Question duplicate groups:            {duplicate_question_groups_count:,}")
     print(f"Clean candidate rows:                 {len(cleaned):,}")
     print(f"Near-duplicate candidate pairs:       {similar_count:,}")
+    print("Duplicate matching: question text only (options/answers ignored).")
     print(f"Structured SQLite database:           {structured_stats['database_path']}")
     print(
         "Subject/subtopic/options/explanations: "
