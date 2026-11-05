@@ -199,10 +199,6 @@ def sync_audit_outputs(
             manifest_path,
             "mpsc_output/audit_reports/latest/github_sync_manifest.json",
         )
-        manifest["manifest_upload"] = manifest_result
-        manifest_path.write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
         if manifest_result["status"] != "uploaded":
             print(
                 f"[GITHUB SYNC] Manifest upload failed: {manifest_result.get('message')}",
