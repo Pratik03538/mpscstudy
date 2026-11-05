@@ -10,7 +10,7 @@ Python project for building a structured catalogue of MPSC learning resources an
 - `mpsc_quiz_api_contract_inspector.py` — inspects the quiz page's same-origin JavaScript assets for API action and pagination implementation hints.
 - `mpsc_quiz_direct_api_probe.py` — browserless direct `requests` probe for the known History questions endpoint; checks `limit` behavior and frontend pagination hints without storing question content.
 - `mpsc_quiz_id_overlap_probe.py` — makes three low-volume identical GET calls to compare returned question IDs and summarize subject/topic metadata; does not store question content.
-- `mpsc_quiz_full_downloader.py` — resumable authorized question collector; backs up and cleans the local SQLite database before harvesting, skips existing IDs and exact question-plus-options duplicates, rejects structurally incomplete MCQs, and has no default per-filter call cap (pauses after 20 consecutive zero-new samples).
+- `mpsc_quiz_full_downloader.py` — resumable authorized question collector; backs up and cleans the local SQLite database before harvesting, skips existing IDs and exact question-plus-options duplicates, rejects structurally incomplete MCQs, and has no default per-filter call cap (pauses after 20 consecutive zero-new samples). Discovery scans `/quiz/` plus the Indian Polity, English, Maths Quiz 1, and Science seed pages and follows in-article links up to two levels. It only sends pages with the known `#quiz-runner` metadata to the API; static/embedded quizzes are reported for a separate extractor.
 
 ## Setup (Windows / PyCharm)
 
