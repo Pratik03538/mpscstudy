@@ -1,14 +1,8 @@
 """MPSC Today quiz API discovery (schema/metadata only).
 
-Records same-site Fetch/XHR endpoint metadata during manual browser interaction.
-It stores URL paths, query parameter names, POST field names, response status,
-byte size, and JSON structure (key paths/types/array lengths) only.
-
-It does NOT save query values, POST values, cookies, authorization headers,
-response values, question text, answer keys, or explanations.
-Obtain written permission before any bulk import of question-bank content.
+Default target: the main History quiz page. Confirmed empty topic pages are
+excluded. Captures request metadata and JSON structure only, not response values.
 """
-
 from __future__ import annotations
 
 import csv
@@ -24,24 +18,21 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from playwright.sync_api import sync_playwright, Error as PlaywrightError
 
 BASE_HOST = "mpsctoday.com"
-DEFAULT_QUIZ_URL = (
-    "https://www.mpsctoday.com/quiz/history/social-reformers-maharashtra/"
-)
+DEFAULT_QUIZ_URL = "https://www.mpsctoday.com/quiz/history/"
+EXCLUDED_QUIZ_PATHS = {
+    "/quiz/history/social-reformers-maharashtra/",
+}
 OUTPUT_DIR = Path(__file__).resolve().parent / "mpsc_output" / "quiz_api_audit"
 JSON_PATH = OUTPUT_DIR / "quiz_network_metadata.json"
 CSV_PATH = OUTPUT_DIR / "quiz_network_metadata.csv"
 
 
 def safe_url(raw_url: str) -> str:
-    """Redact every query value; preserve parameter names for API analysis."""
     parts = urlsplit(raw_url)
     redacted_query = [
-        (key, "REDACTED")
-        for key, _value in parse_qsl(parts.query, keep_blank_values=True)
+        (key, "REDACTED") for key, _value in parse_qsl(parts.query, keep_blank_values=True)
     ]
-    return urlunsplit(
-        (parts.scheme, parts.netloc, parts.path, urlencode(redacted_query), "")
-    )
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(redacted_query), ""))
 
 
 def query_parameter_names(raw_url: str) -> list[str]:
@@ -54,7 +45,6 @@ def is_first_party(url: str) -> bool:
 
 
 def safe_post_field_names(request) -> list[str]:
-    """Return field names only; never return POST field values."""
     names: set[str] = set()
     try:
         data = request.post_data_json
@@ -64,26 +54,21 @@ def safe_post_field_names(request) -> list[str]:
             names.add("<json-array>")
     except Exception:
         pass
-
     if not names:
         try:
             raw = request.post_data or ""
             names.update(key for key, _ in parse_qsl(raw, keep_blank_values=True))
         except Exception:
             pass
-
-    # Do not expose names that look like credential fields.
     blocked = ("token", "secret", "password", "cookie", "authorization", "api_key", "apikey")
     return sorted(name for name in names if not any(part in name.lower() for part in blocked))
 
 
 def summarize_json_shape(payload: Any) -> dict[str, Any]:
-    """Summarize JSON schema only; never return scalar values or question text."""
     paths: list[dict[str, str]] = []
     arrays: list[dict[str, Any]] = []
     queue: list[tuple[str, Any, int]] = [("$", payload, 0)]
     seen = 0
-
     while queue and seen < 250:
         path, value, depth = queue.pop(0)
         seen += 1
@@ -106,10 +91,8 @@ def summarize_json_shape(payload: Any) -> dict[str, Any]:
             paths.append({"path": path, "type": "number"})
         else:
             paths.append({"path": path, "type": "string"})
-
-    top_level_keys = sorted(payload.keys()) if isinstance(payload, dict) else []
     return {
-        "top_level_keys": top_level_keys,
+        "top_level_keys": sorted(payload.keys()) if isinstance(payload, dict) else [],
         "paths": paths,
         "arrays": arrays,
         "truncated": bool(queue),
@@ -118,24 +101,12 @@ def summarize_json_shape(payload: Any) -> dict[str, Any]:
 
 def write_outputs(records: list[dict[str, Any]]) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    JSON_PATH.write_text(
-        json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    JSON_PATH.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
     columns = [
-        "time_utc",
-        "resource_type",
-        "method",
-        "url",
-        "query_parameter_names",
-        "post_field_names",
-        "status",
-        "content_type",
-        "response_bytes",
-        "response_top_level_keys",
-        "response_array_summary",
-        "failed",
-        "failure_reason",
-        "endpoint_shape_seen_before",
+        "time_utc", "resource_type", "method", "url", "query_parameter_names",
+        "post_field_names", "status", "content_type", "response_bytes",
+        "response_top_level_keys", "response_array_summary", "failed",
+        "failure_reason", "endpoint_shape_seen_before",
     ]
     with CSV_PATH.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.DictWriter(handle, fieldnames=columns)
@@ -153,13 +124,18 @@ def write_outputs(records: list[dict[str, Any]]) -> None:
 def main() -> int:
     quiz_url = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_QUIZ_URL
     parts = urlsplit(quiz_url)
+    quiz_path = parts.path.lower()
+    if quiz_path in EXCLUDED_QUIZ_PATHS:
+        print("SKIPPED: This quiz page is excluded because it was reported empty.")
+        return 2
     if (
         parts.scheme not in {"https", "http"}
         or not is_first_party(quiz_url)
         or parts.username
         or parts.password
+        or not quiz_path.startswith("/quiz/")
     ):
-        print("ERROR: Supply an http(s) URL on mpsctoday.com.")
+        print("ERROR: Supply a quiz URL on mpsctoday.com.")
         return 2
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -290,8 +266,6 @@ def main() -> int:
         print("Metadata captured before the error has been saved.")
     finally:
         persist()
-        # The browser may already have exited (for example, when its window was
-        # closed manually). Cleanup errors must not discard the saved audit.
         for handle in (context, browser):
             if handle is not None:
                 try:
