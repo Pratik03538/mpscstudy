@@ -97,6 +97,18 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def progress_bar(current: int, total: int, width: int = 22) -> str:
+    """Visual indicator of API calls used in this run, not question-bank completeness."""
+    total = max(total, 1)
+    current = min(max(current, 0), total)
+    filled = int(width * current / total)
+    return "[" + "#" * filled + "-" * (width - filled) + f"] {current}/{total}"
+
+
+def database_question_count(con: sqlite3.Connection) -> int:
+    return int(con.execute("SELECT COUNT(*) FROM questions").fetchone()[0])
+
+
 def normalize_quiz_url(raw_url: str) -> str | None:
     parts = urlsplit(raw_url)
     host = (parts.hostname or "").lower()
@@ -202,12 +214,18 @@ def discover_quiz_filters(
     visited: set[str] = set()
     filters: dict[str, dict] = {}
 
-    logging.info("Discovering quiz pages from %s", HUB_URL)
+    print(f"\n[DISCOVERY] Scanning quiz pages from {HUB_URL}", flush=True)
     while queue and len(visited) < max_pages:
         page_url = queue.popleft()
         if page_url in visited:
             continue
         visited.add(page_url)
+        print(
+            f"\r[DISCOVERY] pages={len(visited)}/{max_pages} | "
+            f"filters found={len(filters)} | links queued={len(queue)}",
+            end="",
+            flush=True,
+        )
 
         if not robots.can_fetch(USER_AGENT, page_url):
             logging.warning("robots.txt disallows page; skipped: %s", page_url)
@@ -252,9 +270,15 @@ def discover_quiz_filters(
 
         time.sleep(PAGE_DELAY_SECONDS)
 
+    print()
     logging.info(
         "Page discovery finished: pages=%s filters=%s queue_remaining=%s",
         len(visited), len(filters), len(queue),
+    )
+    print(
+        f"[DISCOVERY DONE] {len(visited)} pages checked | "
+        f"{len(filters)} subject/topic filters found | {len(queue)} links left in queue",
+        flush=True,
     )
     return filters
 
@@ -396,6 +420,16 @@ def collect_one_filter(
     if topic:
         params["topic"] = topic
 
+    existing_total = database_question_count(con)
+    print(
+        f"\n[DOWNLOAD START] {key} | existing unique questions in DB={existing_total}",
+        flush=True,
+    )
+    print(
+        f"[PROGRESS] Bar below tracks API calls used out of {max_calls}; "
+        "it is not a percentage of the site's full question bank.",
+        flush=True,
+    )
     logging.info(
         "Starting harvest: subject=%s topic=%s max_calls_this_run=%s",
         subject, topic or "<all topics>", max_calls,
@@ -407,6 +441,7 @@ def collect_one_filter(
     for attempt in range(1, max_calls + 1):
         if not robots.can_fetch(USER_AGENT, API_URL):
             raise RuntimeError("robots.txt disallows API URL; stopping.")
+        request_started = time.perf_counter()
         try:
             response = session.get(API_URL, params=params, timeout=REQUEST_TIMEOUT)
         except requests.RequestException as exc:
@@ -416,10 +451,16 @@ def collect_one_filter(
                 (f"{type(exc).__name__}: {exc}", utc_now(), key),
             )
             con.commit()
+            print(
+                f"\n[DOWNLOAD PAUSED] {key} | request failed: {type(exc).__name__}: {exc} | "
+                f"saved so far={database_question_count(con)}",
+                flush=True,
+            )
             logging.error("Request error for %s: %s", key, exc)
             break
 
         calls_this_run += 1
+        request_seconds = time.perf_counter() - request_started
         if response.status_code in (429, 503):
             message = f"Server requested backoff: HTTP {response.status_code}"
             con.execute(
@@ -428,6 +469,11 @@ def collect_one_filter(
                 (message, utc_now(), key),
             )
             con.commit()
+            print(
+                f"\n[SERVER BACKOFF] {key} | HTTP {response.status_code}. "
+                "Stopped requests; existing database data is preserved.",
+                flush=True,
+            )
             logging.error("%s; stopping all filters without retry.", message)
             global_stop = True
             break
@@ -440,6 +486,11 @@ def collect_one_filter(
                 (message, utc_now(), key),
             )
             con.commit()
+            print(
+                f"\n[HTTP ERROR] {key} | HTTP {response.status_code} | "
+                f"saved so far={database_question_count(con)}",
+                flush=True,
+            )
             logging.error("%s for filter %s; moving on.", message, key)
             break
 
@@ -451,6 +502,11 @@ def collect_one_filter(
                 (message, utc_now(), key),
             )
             con.commit()
+            print(
+                f"\n[INVALID RESPONSE] {key} | expected JSON, got "
+                f"{response.headers.get('Content-Type', 'unknown')}",
+                flush=True,
+            )
             logging.error("%s for filter %s.", message, key)
             break
 
@@ -466,6 +522,10 @@ def collect_one_filter(
                 (message, utc_now(), key),
             )
             con.commit()
+            print(
+                f"\n[INVALID JSON SHAPE] {key} | saved so far={database_question_count(con)}",
+                flush=True,
+            )
             logging.error("%s for filter %s.", message, key)
             break
 
@@ -545,6 +605,16 @@ def collect_one_filter(
         con.commit()
 
         total_new_this_run += new_count
+        current_total = database_question_count(con)
+        request_bar = progress_bar(attempt, max_calls)
+        new_per_second = (new_count / request_seconds) if request_seconds > 0 else 0.0
+        print(
+            f"{request_bar} | {key} | HTTP {response.status_code} | "
+            f"received={len(records)} | NEW +{new_count} | "
+            f"DB TOTAL={current_total} | {len(response.content):,} bytes | "
+            f"{request_seconds:.2f}s | new-rate={new_per_second:.1f}/s",
+            flush=True,
+        )
         logging.info(
             "filter=%s call=%s returned=%s new=%s total_filter_new=%s "
             "no_new_streak=%s rejected=%s",
@@ -553,6 +623,11 @@ def collect_one_filter(
         )
 
         if status in {"complete", "no_data"}:
+            print(
+                f"[FILTER END] {key} | status={status} | "
+                f"new this run={total_new_this_run} | DB total={database_question_count(con)}",
+                flush=True,
+            )
             break
         time.sleep(delay)
 
@@ -571,11 +646,26 @@ def collect_one_filter(
                 "Reached per-run call cap for %s. Re-run to resume this filter.",
                 key,
             )
+            print(
+                f"[FILTER PAUSED AT CALL CAP] {key} | new this run={total_new_this_run} | "
+                f"DB total={database_question_count(con)} | rerun to continue",
+                flush=True,
+            )
 
+    print(
+        f"[DOWNLOAD RESULT] {key} | API calls this run={calls_this_run} | "
+        f"new unique IDs={total_new_this_run} | DB total={database_question_count(con)}",
+        flush=True,
+    )
     return total_new_this_run, global_stop
 
 
 def export_database(con: sqlite3.Connection) -> None:
+    total_before_export = database_question_count(con)
+    print(
+        f"\n[EXPORT] Writing {total_before_export} unique questions to CSV and JSONL...",
+        flush=True,
+    )
     rows = con.execute(
         "SELECT * FROM questions ORDER BY subject_slug, topic_slug, id"
     ).fetchall()
@@ -606,6 +696,11 @@ def export_database(con: sqlite3.Connection) -> None:
     logging.info(
         "Exported %s unique questions. SQLite=%s CSV=%s JSONL=%s",
         len(rows), DB_PATH, CSV_PATH, JSONL_PATH,
+    )
+    print(
+        f"[EXPORT DONE] {len(rows)} unique questions | "
+        f"SQLite: {DB_PATH} | CSV: {CSV_PATH} | JSONL: {JSONL_PATH}",
+        flush=True,
     )
     for row in summary:
         logging.info(
@@ -679,6 +774,12 @@ def main() -> int:
 
     session = make_session()
     robots = load_robots(session)
+    print("[START] MPSC Today authorized question collection", flush=True)
+    print(
+        f"[SETTINGS] API batch={API_LIMIT} | max calls/filter={args.max_calls} | "
+        f"delay={args.delay:.2f}s | stall rounds={args.stall_rounds}",
+        flush=True,
+    )
     filters = discover_quiz_filters(session, robots, args.max_pages)
 
     if args.subject:
@@ -698,6 +799,11 @@ def main() -> int:
         total_filters = len(filters)
         for index, (key, config) in enumerate(sorted(filters.items()), start=1):
             logging.info("FILTER %s/%s: %s", index, total_filters, key)
+            print(
+                f"\n[FILTER {index}/{total_filters}] {key} | "
+                f"pages={len(config['page_urls'])}",
+                flush=True,
+            )
             _, stop_all = collect_one_filter(
                 session=session,
                 robots=robots,
