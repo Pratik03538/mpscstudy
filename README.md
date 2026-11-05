@@ -27,7 +27,9 @@ Python project for building a structured catalogue of MPSC learning resources an
 - Inspect frontend API contract: `python mpsc_quiz_api_contract_inspector.py`
 - Direct terminal API probe (no Chrome): `python mpsc_quiz_direct_api_probe.py`
 - Check whether the 100-question sample changes (no Chrome): `python mpsc_quiz_id_overlap_probe.py`
-- Download quiz questions (no Chrome): `python mpsc_quiz_full_downloader.py` (unlimited calls by default; optional `--stall-rounds 20` controls the zero-new stopping threshold).
+- Download quiz questions (no Chrome): `python mpsc_quiz_full_downloader.py` (unlimited calls by default; resumes interrupted filters from the saved SQLite checkpoint and skips filters previously paused as empty/stalled).
+- Re-sample previously stalled/empty filters explicitly: `python mpsc_quiz_full_downloader.py --resample-finished`.
+- The API currently has no verified offset/page cursor, so resume preserves saved unique questions and per-filter progress rather than guaranteeing the exact next unseen server record.
 
 ## Local data
 
