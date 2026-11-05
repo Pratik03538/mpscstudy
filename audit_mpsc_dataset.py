@@ -23,6 +23,7 @@ from typing import Any
 import pandas as pd
 
 from mpsc_question_db_builder import build_structured_outputs
+from github_report_sync import sync_audit_outputs
 
 DEFAULT_DB = Path(__file__).resolve().parent / "mpsc_output" / "mpsc_questions.db"
 DEFAULT_OUT = Path(__file__).resolve().parent / "mpsc_output" / "data_quality_audit"
@@ -388,7 +389,7 @@ def main() -> int:
 
     summary = {
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "source_database": str(args.db.resolve()),
+        "source_database": args.db.name,
         "source_open_mode": "READ-ONLY",
         "total_rows": total,
         "column_count": len(df.columns),
@@ -398,7 +399,11 @@ def main() -> int:
         "exact_duplicate_rows_flagged": int(len(exact_dups)),
         "near_duplicate_pairs_found": int(similar_count),
         "near_duplicate_threshold": args.similarity,
-        "structured_database": structured_stats,
+        "structured_database": {
+            **structured_stats,
+            "database_path": Path(structured_stats["database_path"]).name,
+            "exports": {key: Path(value).name for key, value in structured_stats["exports"].items()},
+        },
         "error_counts": dict(error_counts),
         "warning_counts": dict(warning_counts),
         "important_limit": (
@@ -407,25 +412,31 @@ def main() -> int:
             "question-wise verification against trusted sources."
         ),
         "outputs": {
-            "question_level_audit": str(audit_path),
-            "cleaned_questions_candidate": str(clean_path),
-            "exact_duplicates": str(duplicate_path),
-            "missingness_report": str(args.out / "missingness_report.csv"),
-            "subject_topic_summary": str(args.out / "subject_topic_summary.csv"),
-            "answer_key_distribution": str(args.out / "answer_key_distribution.csv"),
-            "near_duplicate_candidates": str(similarity_path) if similarity_path else None,
-            "structured_database": structured_stats["database_path"],
-            "questions_sorted": structured_stats["exports"]["questions_sorted"],
-            "subject_index": structured_stats["exports"]["subject_index"],
-            "subtopic_index": structured_stats["exports"]["subtopic_index"],
-            "options_sorted": structured_stats["exports"]["options_sorted"],
-            "answers_explanations_sorted": structured_stats["exports"]["answers_explanations_sorted"],
+            "question_level_audit": audit_path.name,
+            "cleaned_questions_candidate": clean_path.name,
+            "exact_duplicates": duplicate_path.name,
+            "missingness_report": "missingness_report.csv",
+            "subject_topic_summary": "subject_topic_summary.csv",
+            "answer_key_distribution": "answer_key_distribution.csv",
+            "near_duplicate_candidates": similarity_path.name if similarity_path else None,
+            "structured_database": Path(structured_stats["database_path"]).name,
+            "questions_sorted": Path(structured_stats["exports"]["questions_sorted"]).name,
+            "subject_index": Path(structured_stats["exports"]["subject_index"]).name,
+            "subtopic_index": Path(structured_stats["exports"]["subtopic_index"]).name,
+            "options_sorted": Path(structured_stats["exports"]["options_sorted"]).name,
+            "answers_explanations_sorted": Path(structured_stats["exports"]["answers_explanations_sorted"]).name,
         },
     }
     summary_path = args.out / "audit_summary.json"
     summary_path.write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+
+    # Sync generated reports and the new structured DB to GitHub after local outputs are complete.
+    try:
+        sync_audit_outputs(args.out, structured_db_path)
+    except Exception as exc:
+        print(f"[GITHUB SYNC ERROR] {type(exc).__name__}: {exc}", file=sys.stderr)
 
     print("\n========== AUDIT SUMMARY ==========")
     print(f"Total questions:                      {total:,}")
