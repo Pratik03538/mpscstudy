@@ -47,7 +47,7 @@ EXTRA_SEED_URLS = (
     BASE_URL + "/maths-quiz-1/",
     BASE_URL + "/science/",
 )
-SEED_MAX_DEPTH = 2  # Follow article-body links from seed pages, not the whole site.
+SEED_MAX_DEPTH = 0  # Only the four user-supplied URLs; never follow their internal links.
 API_URL = BASE_URL + "/api/quiz/index.php"
 ROBOTS_URL = BASE_URL + "/robots.txt"
 USER_AGENT = "MPSCStudyAuthorizedIntegration/1.0 (authorized quiz data collection)"
@@ -259,9 +259,9 @@ def discover_quiz_filters(
     """
     Discover API quiz filters from the quiz hub and explicit study/quiz seed pages.
 
-    The quiz hub remains restricted to /quiz/ links. Seed pages follow only links
-    inside the main article content, to a bounded depth, so unrelated site-wide
-    navigation is not crawled.
+    The quiz hub remains restricted to /quiz/ links. For extra sources, inspect
+    only the four exact URLs explicitly supplied by the user; do not follow links
+    from those pages or add any other related pages.
     """
     quiz_queue = [(HUB_URL, "quiz", 0)]
     seed_urls = [normalize_content_url(url) for url in EXTRA_SEED_URLS]
