@@ -5,6 +5,7 @@ Never put a token in source code, command-line arguments, or the repository.
 """
 from __future__ import annotations
 
+import argparse
 import base64
 import json
 import os
@@ -213,3 +214,44 @@ def sync_audit_outputs(
         flush=True,
     )
     return manifest
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Sync already-generated MPSC audit reports and structured DB to GitHub without rerunning the audit."
+    )
+    project_dir = Path(__file__).resolve().parent
+    parser.add_argument(
+        "--reports-dir",
+        type=Path,
+        default=project_dir / "mpsc_output" / "data_quality_audit",
+        help="Directory containing the existing audit CSV/JSON/JSONL outputs.",
+    )
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=project_dir / "mpsc_output" / "mpsc_questions_structured.db",
+        help="Path to the generated normalized SQLite database.",
+    )
+    parser.add_argument("--repository", default=DEFAULT_REPOSITORY)
+    parser.add_argument("--branch", default=DEFAULT_BRANCH)
+    args = parser.parse_args()
+
+    if not args.reports_dir.exists():
+        parser.error(f"Reports directory does not exist: {args.reports_dir}")
+    if not args.db.exists():
+        parser.error(f"Structured database does not exist: {args.db}")
+
+    result = sync_audit_outputs(
+        output_dir=args.reports_dir,
+        structured_database=args.db,
+        repository=args.repository,
+        branch=args.branch,
+    )
+    if result.get("status") == "skipped_missing_token":
+        return 2
+    return 0 if result.get("failed_count", 0) == 0 else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
