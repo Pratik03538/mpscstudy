@@ -10,6 +10,7 @@ Python project for building a structured catalogue of MPSC learning resources an
 - `mpsc_quiz_api_contract_inspector.py` — inspects the quiz page's same-origin JavaScript assets for API action and pagination implementation hints.
 - `mpsc_quiz_direct_api_probe.py` — browserless direct `requests` probe for the known History questions endpoint; checks `limit` behavior and frontend pagination hints without storing question content.
 - `mpsc_quiz_id_overlap_probe.py` — makes three low-volume identical GET calls to compare returned question IDs and summarize subject/topic metadata; does not store question content.
+- `mpsc_quiz_full_downloader.py` — resumable authorized question collector; backs up and cleans the local SQLite database before harvesting, skips existing IDs and exact question-plus-options duplicates, rejects structurally incomplete MCQs, and has no default per-filter call cap (pauses after 20 consecutive zero-new samples).
 
 ## Setup (Windows / PyCharm)
 
@@ -26,6 +27,7 @@ Python project for building a structured catalogue of MPSC learning resources an
 - Inspect frontend API contract: `python mpsc_quiz_api_contract_inspector.py`
 - Direct terminal API probe (no Chrome): `python mpsc_quiz_direct_api_probe.py`
 - Check whether the 100-question sample changes (no Chrome): `python mpsc_quiz_id_overlap_probe.py`
+- Download quiz questions (no Chrome): `python mpsc_quiz_full_downloader.py` (unlimited calls by default; optional `--stall-rounds 20` controls the zero-new stopping threshold).
 
 ## Local data
 
