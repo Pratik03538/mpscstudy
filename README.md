@@ -11,6 +11,7 @@ Python project for building a structured catalogue of MPSC learning resources an
 - `mpsc_quiz_direct_api_probe.py` — browserless direct `requests` probe for the known History questions endpoint; checks `limit` behavior and frontend pagination hints without storing question content.
 - `mpsc_quiz_id_overlap_probe.py` — makes three low-volume identical GET calls to compare returned question IDs and summarize subject/topic metadata; does not store question content.
 - `mpsc_quiz_full_downloader.py` — resumable authorized question collector; backs up and cleans the local SQLite database before harvesting, skips existing IDs and exact question-plus-options duplicates, rejects structurally incomplete MCQs, and has no default per-filter call cap (pauses after 20 consecutive zero-new samples). Discovery scans `/quiz/` plus exactly the four user-supplied seed URLs (Indian Polity, English, Maths Quiz 1, and Science). It does not follow links from those four pages or add any other related pages. It only sends pages with the known `#quiz-runner` metadata to the API; static/embedded quizzes are reported for a separate extractor.
+- `audit_mpsc_dataset.py` — read-only pandas/SQLite data-quality audit for the collected question bank. Checks missing fields, invalid MCQ structure and answer-key labels, repeated options, malformed JSON, text/encoding issues, exact duplicates, and optional TF-IDF near-duplicate candidates. Exports a structurally-valid, exact-deduplicated candidate CSV separately; it never edits the source SQLite database and does not claim factual answer verification.
 
 ## Setup (Windows / PyCharm)
 
@@ -29,6 +30,11 @@ Python project for building a structured catalogue of MPSC learning resources an
 - Check whether the 100-question sample changes (no Chrome): `python mpsc_quiz_id_overlap_probe.py`
 - Download quiz questions (no Chrome): `python mpsc_quiz_full_downloader.py` (unlimited calls by default; resumes interrupted filters from the saved SQLite checkpoint and skips filters previously paused as empty/stalled).
 - Re-sample previously stalled/empty filters explicitly: `python mpsc_quiz_full_downloader.py --resample-finished`.
+- Run the data-quality audit: `python audit_mpsc_dataset.py`.
+- Skip near-duplicate similarity analysis for a faster structural audit: `python audit_mpsc_dataset.py --similarity 0`.
+- Use a non-default database/output directory: `python audit_mpsc_dataset.py --db path/to/mpsc_questions.db --out path/to/audit_output`.
+- The audit writes CSV/JSON reports under `mpsc_output/data_quality_audit/`. The original `mpsc_questions.db` is opened read-only and is never changed.
+- The audit's PASS/INVALID labels describe structural checks only. Correct-answer factual accuracy needs independent question-wise verification against trusted references.
 - The API currently has no verified offset/page cursor, so resume preserves saved unique questions and per-filter progress rather than guaranteeing the exact next unseen server record.
 
 ## Local data
