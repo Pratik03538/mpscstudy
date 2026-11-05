@@ -1,16 +1,9 @@
-"""Audit only quiz URLs already present in the existing MPSC catalogue database.
+"""Audit known MPSC Today quiz URLs, excluding confirmed empty pages.
 
-This script:
-- Reuses mpsc_output/mpsc_catalog.db; it does not run a site-wide crawl.
-- Checks only known /quiz/ URLs recorded in pages/links tables.
-- Respects robots.txt and uses one request at a time with a delay.
-- Stores page metadata and quiz-UI indicators, NOT question text, options, answers,
-  explanations, or protected page copies.
-- Exports quiz_audit.csv, quiz_links.csv and quiz_assets.csv.
-
-The MPSC Today Privacy Policy contains conflicting statements: one paragraph says
-information is public-domain/open-use, while its Copyright Policy prohibits copying.
-Obtain explicit written permission before bulk downloading/importing quiz content.
+Reuses mpsc_output/mpsc_catalog.db; no site-wide crawl is performed.
+Only page metadata and quiz-interface indicators are stored. It does not copy
+question text, options, answers, explanations, or protected page contents.
+Get written permission before bulk-importing question-bank content.
 """
 from __future__ import annotations
 
@@ -37,7 +30,13 @@ ASSETS_CSV = OUTPUT_DIR / "quiz_assets.csv"
 
 REQUEST_DELAY_SECONDS = 3.0
 REQUEST_TIMEOUT_SECONDS = 25
-USER_AGENT = "MPSCQuizCatalogAudit/1.0 (personal study catalogue; add-your-contact-email)"
+USER_AGENT = "MPSCQuizCatalogAudit/1.1 (personal study catalogue; add-your-contact-email)"
+
+# Confirmed empty/unwanted quiz pages. They are excluded even if they remain
+# in the old catalogue's pages or links tables.
+EXCLUDED_QUIZ_PATHS = {
+    "/quiz/history/social-reformers-maharashtra/",
+}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 
@@ -61,9 +60,11 @@ def normalize_quiz_url(raw: str) -> str:
 
 def is_quiz_url(url: str) -> bool:
     p = urlparse(url)
+    path = p.path.lower()
     return (
         (p.hostname or "").lower() in {"mpsctoday.com", "www.mpsctoday.com"}
-        and p.path.lower().startswith("/quiz/")
+        and path.startswith("/quiz/")
+        and path not in EXCLUDED_QUIZ_PATHS
     )
 
 
@@ -115,6 +116,19 @@ def load_known_quiz_urls(conn: sqlite3.Connection) -> list[str]:
     return sorted(urls, key=lambda u: (u.count("/"), u))
 
 
+def remove_excluded_audit_rows(conn: sqlite3.Connection) -> None:
+    """Remove stale audit metadata/links for specifically excluded empty pages."""
+    for path in EXCLUDED_QUIZ_PATHS:
+        url = BASE_URL.rstrip("/") + path
+        conn.execute("DELETE FROM quiz_audit WHERE url=?", (url,))
+        conn.execute(
+            "DELETE FROM quiz_audit_links WHERE source_url=? OR target_url=?",
+            (url, url),
+        )
+        conn.execute("DELETE FROM quiz_audit_assets WHERE source_url=?", (url,))
+    conn.commit()
+
+
 def make_robot_parser(session: requests.Session) -> RobotFileParser:
     robots_url = urljoin(BASE_URL, "robots.txt")
     response = session.get(robots_url, timeout=REQUEST_TIMEOUT_SECONDS)
@@ -128,9 +142,7 @@ def make_robot_parser(session: requests.Session) -> RobotFileParser:
     return parser
 
 
-def visible_control_labels(
-    soup: BeautifulSoup, patterns: tuple[str, ...]
-) -> list[str]:
+def visible_control_labels(soup: BeautifulSoup, patterns: tuple[str, ...]) -> list[str]:
     found: list[str] = []
     for node in soup.find_all(["button", "a", "label", "input"]):
         value = " ".join(
@@ -170,8 +182,10 @@ def main() -> None:
     logging.info("Using existing database: %s", DB_PATH)
     conn = sqlite3.connect(DB_PATH)
     create_tables(conn)
+    remove_excluded_audit_rows(conn)
     urls = load_known_quiz_urls(conn)
     logging.info("Known quiz URLs found in existing catalogue: %s", len(urls))
+    logging.info("Excluded empty quiz paths: %s", sorted(EXCLUDED_QUIZ_PATHS))
 
     try:
         robots = make_robot_parser(session)
@@ -211,9 +225,7 @@ def main() -> None:
                     (url, f"Request error: {str(exc)[:350]}", now),
                 )
                 conn.commit()
-                logging.warning(
-                    "[%s/%s] Request failed: %s | %s", index, len(urls), url, exc
-                )
+                logging.warning("[%s/%s] Request failed: %s | %s", index, len(urls), url, exc)
                 time.sleep(REQUEST_DELAY_SECONDS)
                 continue
 
@@ -231,9 +243,7 @@ def main() -> None:
                     ),
                 )
                 conn.commit()
-                logging.warning(
-                    "Server returned HTTP %s; stopping politely.", response.status_code
-                )
+                logging.warning("Server returned HTTP %s; stopping politely.", response.status_code)
                 break
 
             content_type = response.headers.get("Content-Type", "").lower()
@@ -252,21 +262,11 @@ def main() -> None:
                     ),
                 )
                 conn.commit()
-                logging.info(
-                    "[%s/%s] HTTP %s / non-HTML: %s",
-                    index,
-                    len(urls),
-                    response.status_code,
-                    url,
-                )
+                logging.info("[%s/%s] HTTP %s / non-HTML: %s", index, len(urls), response.status_code, url)
                 continue
 
             final_url = normalize_quiz_url(response.url)
-            if (
-                not final_url
-                or not is_quiz_url(final_url)
-                or not robots.can_fetch(USER_AGENT, final_url)
-            ):
+            if not final_url or not is_quiz_url(final_url) or not robots.can_fetch(USER_AGENT, final_url):
                 failed += 1
                 conn.execute(
                     """INSERT OR REPLACE INTO quiz_audit
@@ -275,7 +275,7 @@ def main() -> None:
                         url,
                         response.status_code,
                         content_type,
-                        "Redirect outside permitted /quiz/ scope.",
+                        "Redirect outside permitted /quiz/ scope or to excluded page.",
                         now,
                     ),
                 )
@@ -288,14 +288,8 @@ def main() -> None:
             h1_text = h1.get_text(" ", strip=True) if h1 else ""
             lang = soup.find("html")
             page_language = lang.get("lang", "") if lang else ""
-            practice_exam = visible_control_labels(
-                soup, (r"practice", r"exam", r"सराव", r"परीक्षा")
-            )
-            language_controls = visible_control_labels(
-                soup, (r"मराठी", r"english", r"हिंदी")
-            )
-
-            # These are visible-DOM indicators, not a count of the full question bank.
+            practice_exam = visible_control_labels(soup, (r"practice", r"exam", r"सराव", r"परीक्षा"))
+            language_controls = visible_control_labels(soup, (r"मराठी", r"english", r"हिंदी"))
             question_markers = soup.select(
                 '[class*="question"], [id*="question"], '
                 ".wpProQuiz_listItem, .tutor-question-item, [data-question-id]"
@@ -303,14 +297,7 @@ def main() -> None:
             radio_count = len(soup.select('input[type="radio"]'))
             checkbox_count = len(soup.select('input[type="checkbox"]'))
             form_count = len(soup.find_all("form"))
-            pagination = 0
-            quiz_ui = bool(
-                question_markers
-                or radio_count
-                or checkbox_count
-                or form_count
-                or practice_exam
-            )
+            quiz_ui = bool(question_markers or radio_count or checkbox_count or form_count or practice_exam)
 
             conn.execute(
                 """INSERT OR REPLACE INTO quiz_audit
@@ -331,7 +318,7 @@ def main() -> None:
                     radio_count,
                     checkbox_count,
                     form_count,
-                    pagination,
+                    0,
                     int(quiz_ui),
                     "Visible DOM counts are not total bank size; question text was not stored.",
                     now,
@@ -389,16 +376,8 @@ def main() -> None:
             )
 
         write_csv(conn, "SELECT * FROM quiz_audit ORDER BY url", AUDIT_CSV)
-        write_csv(
-            conn,
-            "SELECT * FROM quiz_audit_links ORDER BY source_url,target_url",
-            LINKS_CSV,
-        )
-        write_csv(
-            conn,
-            "SELECT * FROM quiz_audit_assets ORDER BY source_url,asset_url",
-            ASSETS_CSV,
-        )
+        write_csv(conn, "SELECT * FROM quiz_audit_links ORDER BY source_url,target_url", LINKS_CSV)
+        write_csv(conn, "SELECT * FROM quiz_audit_assets ORDER BY source_url,asset_url", ASSETS_CSV)
         totals = conn.execute("SELECT COUNT(*) FROM quiz_audit").fetchone()[0]
         print("\nQUIZ-ONLY AUDIT FINISHED")
         print(f"Known quiz URLs         : {len(urls)}")
@@ -408,10 +387,10 @@ def main() -> None:
         print(f"Audit rows in database  : {totals}")
         print(f"Database                : {DB_PATH.resolve()}")
         print(f"Audit CSV               : {AUDIT_CSV.resolve()}")
-        print(f"Quiz links CSV          : {LINKS_CSV.resolve()}")
-        print(f"JS/iframe assets CSV    : {ASSETS_CSV.resolve()}")
+        print(f"Quiz links CSV           : {LINKS_CSV.resolve()}")
+        print(f"JS/iframe assets CSV     : {ASSETS_CSV.resolve()}")
         print("Question text/options/answers/explanations were NOT copied or downloaded.")
-        print("Get written permission before bulk-importing the site's quiz content.")
+        print("Get written permission before bulk-importing quiz content.")
     finally:
         conn.close()
 
