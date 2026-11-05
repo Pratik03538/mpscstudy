@@ -400,7 +400,7 @@ def main() -> int:
         aggregations = {
             "invalid_count": ("is_structurally_valid", lambda values: int((~values).sum())),
             "needs_review_count": ("audit_status", lambda values: int((values == "NEEDS_REVIEW").sum())),
-            "exact_duplicate_rows": ("exact_duplicate_content", "sum"),
+            "duplicate_question_rows": ("duplicate_question_text", "sum"),
         }
         if "id" in full.columns:
             aggregations["question_count"] = ("id", "count")
@@ -441,8 +441,8 @@ def main() -> int:
         "total_rows": total,
         "column_count": len(df.columns),
         "audit_status_counts": {str(key): int(value) for key, value in status_counts.items()},
-        "structurally_valid_rows_before_exact_dedup": int(full["is_structurally_valid"].sum()),
-        "cleaned_candidate_rows_after_exact_dedup": int(len(cleaned)),
+        "structurally_valid_rows_before_question_dedup": int(full["is_structurally_valid"].sum()),
+        "cleaned_candidate_rows_after_question_dedup": int(len(cleaned)),
         "duplicate_question_rows_flagged_all_audit_rows": int(len(question_dups)),
         "structurally_invalid_rows_excluded": structurally_invalid_rows_excluded,
         "valid_duplicate_question_rows_removed_from_candidate": valid_duplicate_question_rows_removed,
@@ -458,7 +458,7 @@ def main() -> int:
         "error_counts": dict(error_counts),
         "warning_counts": dict(warning_counts),
         "important_limit": (
-            "This audit checks structure, formatting, metadata and similarity. It does NOT "
+            "This audit requires question text, four options and a valid correct-answer key. Missing explanations are allowed. Duplicate matching compares question text only. It does NOT "
             "determine whether the marked answer is factually correct; that requires "
             "question-wise verification against trusted sources."
         ),
