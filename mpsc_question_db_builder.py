@@ -222,7 +222,9 @@ def build_structured_outputs(
                        a.correct_option_raw, a.correct_option_key, a.correct_option_text,
                        e.explanation_mr, e.explanation_en,
                        q.is_pyq, q.pyq_exam, q.pyq_year, q.difficulty,
-                       qa.audit_status, qa.audit_errors, qa.audit_warnings, q.sort_order
+                       qa.audit_status, qa.audit_errors, qa.audit_warnings,
+                       qa.question_fingerprint, qa.question_duplicate_group,
+                       qa.duplicate_question_text, q.sort_order
                 FROM questions q
                 JOIN subjects s ON s.subject_key=q.subject_key
                 JOIN subtopics st ON st.subtopic_key=q.subtopic_key
