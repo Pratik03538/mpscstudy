@@ -179,7 +179,7 @@ def build_structured_outputs(
             );
             CREATE TABLE questions (
                 question_id TEXT PRIMARY KEY,
-                content_hash TEXT,
+                source_content_hash TEXT,
                 subject_key TEXT NOT NULL REFERENCES subjects(subject_key),
                 subtopic_key TEXT NOT NULL REFERENCES subtopics(subtopic_key),
                 question_mr TEXT, question_en TEXT,
@@ -207,12 +207,13 @@ def build_structured_outputs(
             CREATE TABLE question_audit (
                 question_id TEXT PRIMARY KEY REFERENCES questions(question_id) ON DELETE CASCADE,
                 audit_status TEXT, audit_errors TEXT, audit_warnings TEXT,
-                content_fingerprint TEXT, exact_duplicate_content INTEGER NOT NULL DEFAULT 0
+                question_fingerprint TEXT, question_duplicate_group TEXT,
+                duplicate_question_text INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE INDEX idx_questions_subject_subtopic ON questions(subject_key, subtopic_key, sort_order);
             CREATE INDEX idx_subtopics_subject ON subtopics(subject_key, subtopic_name_en, subtopic_name_mr);
-            CREATE INDEX idx_questions_content_hash ON questions(content_hash);
+            CREATE INDEX idx_question_audit_fingerprint ON question_audit(question_fingerprint);
             CREATE VIEW question_catalogue AS
                 SELECT q.question_id,
                        s.subject_id, s.subject_slug, s.subject_name_en, s.subject_name_mr,
@@ -240,7 +241,7 @@ def build_structured_outputs(
         )
 
         q_sql = """INSERT INTO questions (
-            question_id,content_hash,subject_key,subtopic_key,question_mr,question_en,
+            question_id,source_content_hash,subject_key,subtopic_key,question_mr,question_en,
             is_pyq,pyq_exam,pyq_year,difficulty,times_served,times_attempted,times_correct,
             last_pushed_to_tg,is_published,created_at,updated_at,first_seen_at,last_seen_at,
             raw_json,source_row_json,sort_order
@@ -306,8 +307,9 @@ def build_structured_outputs(
             audit_rows.append((
                 qid, _text(row.get("audit_status")) or "NEEDS_REVIEW",
                 _text(row.get("audit_errors")), _text(row.get("audit_warnings")),
-                _text(row.get("content_fingerprint")),
-                int(bool(row.get("exact_duplicate_content", False))),
+                _text(row.get("question_fingerprint")),
+                _text(row.get("question_duplicate_group")),
+                int(bool(row.get("duplicate_question_text", False))),
             ))
 
         db.executemany(
@@ -320,7 +322,7 @@ def build_structured_outputs(
             "INSERT INTO explanations VALUES (?,?,?)", explanation_rows
         )
         db.executemany(
-            "INSERT INTO question_audit VALUES (?,?,?,?,?,?)", audit_rows
+            "INSERT INTO question_audit VALUES (?,?,?,?,?,?,?)", audit_rows
         )
         metadata = {
             "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
