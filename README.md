@@ -7,7 +7,8 @@ Python project for building a structured catalogue of MPSC learning resources an
 - `main.py` — resumable, robots.txt-aware public catalogue scanner.
 - `mpsc_quiz_audit.py` — audits known quiz pages and records page metadata, visible quiz controls, links, and assets.
 - `mpsc_quiz_api_discovery.py` — observes normal browser-driven quiz API requests and records safe request/response schema metadata.
-- `mpsc_quiz_api_contract_inspector.py` — inspects the quiz page's same-origin JavaScript assets for API action and pagination implementation hints. It does not call the question API.
+- `mpsc_quiz_api_contract_inspector.py` — inspects the quiz page's same-origin JavaScript assets for API action and pagination implementation hints.
+- `mpsc_quiz_direct_api_probe.py` — browserless direct `requests` probe for the known History questions endpoint; checks `limit` behavior and frontend pagination hints without storing question content.
 
 ## Setup (Windows / PyCharm)
 
@@ -22,6 +23,7 @@ Python project for building a structured catalogue of MPSC learning resources an
 - Quiz-only audit: `python mpsc_quiz_audit.py`
 - Interactive API metadata capture: `python mpsc_quiz_api_discovery.py`
 - Inspect frontend API contract: `python mpsc_quiz_api_contract_inspector.py`
+- Direct terminal API probe (no Chrome): `python mpsc_quiz_direct_api_probe.py`
 
 ## Local data
 
