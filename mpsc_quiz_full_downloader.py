@@ -1,8 +1,10 @@
 """Authorized, resumable MPSC Today quiz question collector.
 
-Discovers quiz pages under /quiz/, reads #quiz-runner data-subject/data-topic,
-then calls the public GET question endpoint. It stores complete returned records
-in SQLite, deduplicates by question ID, and exports CSV + JSONL.
+Discovers quiz pages under /quiz/ plus configured MPSC Today study/quiz seed
+pages and their in-article links. API-backed pages are identified through
+#quiz-runner data-subject/data-topic and collected through the public GET endpoint.
+Non-API/static quiz pages are reported separately; they are not silently treated
+as API filters. Records are stored in SQLite with ID and exact-content deduplication.
 
 The endpoint has so far returned changing 100-record samples for identical
 subject queries, and no documented page/offset cursor was found in the frontend.
@@ -39,6 +41,13 @@ from bs4 import BeautifulSoup
 
 BASE_URL = "https://www.mpsctoday.com"
 HUB_URL = BASE_URL + "/quiz/"
+EXTRA_SEED_URLS = (
+    BASE_URL + "/indian-polity/",
+    BASE_URL + "/english/",
+    BASE_URL + "/maths-quiz-1/",
+    BASE_URL + "/science/",
+)
+SEED_MAX_DEPTH = 2  # Follow article-body links from seed pages, not the whole site.
 API_URL = BASE_URL + "/api/quiz/index.php"
 ROBOTS_URL = BASE_URL + "/robots.txt"
 USER_AGENT = "MPSCStudyAuthorizedIntegration/1.0 (authorized quiz data collection)"
@@ -131,6 +140,33 @@ def normalize_quiz_url(raw_url: str) -> str | None:
     return urlunsplit(("https", "www.mpsctoday.com", path, "", ""))
 
 
+def normalize_content_url(raw_url: str) -> str | None:
+    """Normalize an internal article URL from one of the explicit seed pages."""
+    parts = urlsplit(raw_url)
+    host = (parts.hostname or "").lower()
+    if host not in {"mpsctoday.com", "www.mpsctoday.com"}:
+        return None
+    path = parts.path or "/"
+    blocked_prefixes = (
+        "/wp-admin/", "/wp-content/", "/wp-includes/", "/wp-json/",
+        "/tag/", "/author/", "/feed/", "/comments/",
+    )
+    if any(path.startswith(prefix) for prefix in blocked_prefixes):
+        return None
+    if path.lower().endswith((
+        ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".pdf",
+        ".zip", ".mp4", ".mp3", ".css", ".js", ".xml",
+    )):
+        return None
+    # Avoid WordPress archive pagination and category-wide crawls.
+    if path.startswith(("/page/", "/category/")):
+        return None
+    normalized_path = "/" + "/".join(part for part in path.split("/") if part)
+    if normalized_path != "/" and parts.path.endswith("/"):
+        normalized_path += "/"
+    return urlunsplit(("https", "www.mpsctoday.com", normalized_path, "", ""))
+
+
 def make_session() -> requests.Session:
     session = requests.Session()
     session.headers.update({
@@ -220,14 +256,32 @@ def discover_quiz_filters(
     robots: RobotFileParser,
     max_pages: int,
 ) -> dict[str, dict]:
-    queue = deque([HUB_URL])
-    queued = {HUB_URL}
+    """
+    Discover API quiz filters from the quiz hub and explicit study/quiz seed pages.
+
+    The quiz hub remains restricted to /quiz/ links. Seed pages follow only links
+    inside the main article content, to a bounded depth, so unrelated site-wide
+    navigation is not crawled.
+    """
+    quiz_queue = [(HUB_URL, "quiz", 0)]
+    seed_urls = [normalize_content_url(url) for url in EXTRA_SEED_URLS]
+    queue = deque(quiz_queue + [
+        (url, "content", 0) for url in seed_urls if url
+    ])
+    queued = {item[0] for item in queue}
     visited: set[str] = set()
     filters: dict[str, dict] = {}
+    seed_root_set = set(seed_urls)
+    seed_roots_checked: set[str] = set()
+    content_pages_checked = 0
+    static_quiz_pages: list[str] = []
 
-    print(f"\n[DISCOVERY] Scanning quiz pages from {HUB_URL}", flush=True)
+    print(
+        f"\n[DISCOVERY] Scanning {HUB_URL} plus {len(seed_root_set)} extra seed pages",
+        flush=True,
+    )
     while queue and len(visited) < max_pages:
-        page_url = queue.popleft()
+        page_url, crawl_mode, depth = queue.popleft()
         if page_url in visited:
             continue
         visited.add(page_url)
@@ -254,7 +308,13 @@ def discover_quiz_filters(
             logging.warning("Page fetch failed (%s): %s", exc, page_url)
             continue
 
+        if crawl_mode == "content":
+            content_pages_checked += 1
+            if page_url in seed_root_set:
+                seed_roots_checked.add(page_url)
+
         runner = soup.find(id="quiz-runner")
+        found_runner = False
         if runner is not None:
             subject = str(runner.get("data-subject") or "").strip().lower()
             topic = str(runner.get("data-topic") or "").strip().lower()
@@ -268,29 +328,75 @@ def discover_quiz_filters(
                         "page_urls": [],
                     }
                 filters[key]["page_urls"].append(response.url)
+                found_runner = True
                 logging.info(
                     "Found API filter: subject=%s topic=%s (%s)",
                     subject, topic or "<all topics>", response.url,
                 )
 
-        for anchor in soup.find_all("a", href=True):
-            candidate = normalize_quiz_url(urljoin(response.url, anchor["href"]))
-            if candidate and candidate not in queued and candidate not in visited:
-                queued.add(candidate)
-                queue.append(candidate)
+        # Maths quiz 1 is currently a static/embedded quiz page, not the known
+        # #quiz-runner API format. Report it rather than inventing an API slug.
+        if page_url.rstrip("/") == (BASE_URL + "/maths-quiz-1").rstrip("/") and not found_runner:
+            static_quiz_pages.append(response.url)
+            print(
+                f"\n[STATIC QUIZ PAGE] {response.url} | no #quiz-runner API marker; "
+                "needs its own HTML question extractor.",
+                flush=True,
+            )
+
+        if crawl_mode == "quiz":
+            for anchor in soup.find_all("a", href=True):
+                candidate = normalize_quiz_url(urljoin(response.url, anchor["href"]))
+                if candidate and candidate not in queued and candidate not in visited:
+                    queued.add(candidate)
+                    queue.append((candidate, "quiz", 0))
+        elif depth < SEED_MAX_DEPTH:
+            content_root = (
+                soup.select_one(".entry-content")
+                or soup.select_one(".wp-block-post-content")
+                or soup.select_one("article")
+                or soup.select_one("main")
+            )
+            if content_root is not None:
+                for anchor in content_root.find_all("a", href=True):
+                    raw_candidate = urljoin(response.url, anchor["href"])
+                    quiz_candidate = normalize_quiz_url(raw_candidate)
+                    if quiz_candidate:
+                        candidate = quiz_candidate
+                        next_mode = "quiz"
+                        next_depth = 0
+                    else:
+                        candidate = normalize_content_url(raw_candidate)
+                        next_mode = "content"
+                        next_depth = depth + 1
+                    if (
+                        candidate
+                        and candidate not in queued
+                        and candidate not in visited
+                    ):
+                        queued.add(candidate)
+                        queue.append((candidate, next_mode, next_depth))
 
         time.sleep(PAGE_DELAY_SECONDS)
 
     print()
     logging.info(
-        "Page discovery finished: pages=%s filters=%s queue_remaining=%s",
-        len(visited), len(filters), len(queue),
+        "Page discovery finished: pages=%s filters=%s content_pages=%s "
+        "seed_roots_checked=%s static_quiz_pages=%s queue_remaining=%s",
+        len(visited), len(filters), content_pages_checked,
+        len(seed_roots_checked), len(static_quiz_pages), len(queue),
     )
     print(
         f"[DISCOVERY DONE] {len(visited)} pages checked | "
-        f"{len(filters)} subject/topic filters found | {len(queue)} links left in queue",
+        f"{len(filters)} API subject/topic filters found | "
+        f"{content_pages_checked} content pages checked | "
+        f"{len(seed_roots_checked)}/{len(seed_root_set)} seed roots reached | "
+        f"{len(static_quiz_pages)} static quiz pages need separate extraction | "
+        f"{len(queue)} links left in queue",
         flush=True,
     )
+    for url in sorted(seed_roots_checked):
+        print(f"[SEED CHECKED] {url}", flush=True)
     return filters
 
 
@@ -980,7 +1086,9 @@ def main() -> int:
     robots = load_robots(session)
     print("[START] MPSC Today authorized question collection", flush=True)
     print(
-        f"[SETTINGS] API batch={API_LIMIT} | max calls/filter="
+        f"[SETTINGS] Extra content seeds={len(EXTRA_SEED_URLS)} | "
+        f"article link depth={SEED_MAX_DEPTH} | "
+        f"API batch={API_LIMIT} | max calls/filter="
         f"{'UNLIMITED' if args.max_calls == 0 else args.max_calls} | "
         f"delay={args.delay:.2f}s | stall rounds={args.stall_rounds} | "
         f"resample-finished={args.resample_finished}",
