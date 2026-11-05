@@ -410,9 +410,27 @@ def collect_one_filter(
     stall_rounds: int,
 ) -> tuple[int, bool]:
     state = register_filter(con, key, config)
-    if state["status"] in {"complete", "no_data"}:
-        logging.info("Skipping already finished filter %s (%s)", key, state["status"])
+    if state["status"] == "no_data":
+        logging.info("Skipping filter with confirmed empty response: %s", key)
+        print(f"[SKIP] {key} | previous API response contained no records.", flush=True)
         return 0, False
+    if state["status"] in {"complete", "stalled_no_new", "max_calls_reached"}:
+        # A previous no-new streak is not proof that the complete bank was downloaded.
+        con.execute(
+            """UPDATE harvest_filters
+               SET status='running', consecutive_no_new=0, updated_at=?
+               WHERE filter_key=?""",
+            (utc_now(), key),
+        )
+        con.commit()
+        state = con.execute(
+            "SELECT * FROM harvest_filters WHERE filter_key=?", (key,)
+        ).fetchone()
+        print(
+            f"[RESUME] {key} | starting a fresh sample pass; earlier no-new calls "
+            "were not treated as proof of full completeness.",
+            flush=True,
+        )
 
     subject = config["subject"]
     topic = config["topic"]
@@ -441,6 +459,11 @@ def collect_one_filter(
     for attempt in range(1, max_calls + 1):
         if not robots.can_fetch(USER_AGENT, API_URL):
             raise RuntimeError("robots.txt disallows API URL; stopping.")
+        print(
+            f"[REQUEST] {key} | API call {attempt}/{max_calls} | "
+            f"requesting up to {API_LIMIT} records...",
+            flush=True,
+        )
         request_started = time.perf_counter()
         try:
             response = session.get(API_URL, params=params, timeout=REQUEST_TIMEOUT)
@@ -565,7 +588,7 @@ def collect_one_filter(
         if not records and count_value == 0:
             status = "no_data"
         elif next_no_new >= stall_rounds:
-            status = "complete"
+            status = "stalled_no_new"
 
         con.execute(
             """UPDATE harvest_filters
@@ -622,9 +645,21 @@ def collect_one_filter(
             state["new_rows"] + new_count, next_no_new, rejected_count,
         )
 
-        if status in {"complete", "no_data"}:
+        if status in {"stalled_no_new", "no_data"}:
+            if status == "stalled_no_new":
+                print(
+                    f"[FILTER PAUSED] {key} | {stall_rounds} consecutive samples added "
+                    "no new IDs. This is NOT proof that the full topic is downloaded; "
+                    "rerun to sample again or obtain official pagination/export details.",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"[FILTER EMPTY] {key} | API returned zero records for this filter.",
+                    flush=True,
+                )
             print(
-                f"[FILTER END] {key} | status={status} | "
+                f"[FILTER RESULT] {key} | status={status} | "
                 f"new this run={total_new_this_run} | DB total={database_question_count(con)}",
                 flush=True,
             )
