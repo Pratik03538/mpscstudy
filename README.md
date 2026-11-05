@@ -13,6 +13,7 @@ Python project for building a structured catalogue of MPSC learning resources an
 - `mpsc_quiz_full_downloader.py` — resumable authorized question collector; backs up and cleans the local SQLite database before harvesting, skips existing IDs and exact question-plus-options duplicates, rejects structurally incomplete MCQs, and has no default per-filter call cap (pauses after 20 consecutive zero-new samples). Discovery scans `/quiz/` plus exactly the four user-supplied seed URLs (Indian Polity, English, Maths Quiz 1, and Science). It does not follow links from those four pages or add any other related pages. It only sends pages with the known `#quiz-runner` metadata to the API; static/embedded quizzes are reported for a separate extractor.
 - `audit_mpsc_dataset.py` — one-command read-only data-quality audit and processing pipeline. Checks missing fields, invalid MCQ structure and answer-key labels, repeated options, malformed JSON, text/encoding issues, exact duplicates, and TF-IDF near-duplicate candidates. It calls `mpsc_question_db_builder.py` to create a separate normalized SQLite database and sorted subject/subtopic exports; the source collection DB is never modified.
 - `mpsc_question_db_builder.py` — creates the normalized database tables `subjects`, `subtopics`, `questions`, `options`, `answers`, `explanations`, `question_audit`, and `metadata`. It preserves original available source fields in each question's `source_row_json`; absent source IDs/names/explanations remain NULL rather than being invented. `answers.correct_option_text` is taken from the option named by the supplied answer key, not independently fact-checked.
+- `github_report_sync.py` — uploads the generated audit CSV/JSON/JSONL reports and the new structured SQLite database to `mpsc_output/audit_reports/latest/` in this repository. Authentication is read from `MPSC_GITHUB_TOKEN` (or `GITHUB_TOKEN`); no token is stored in source code.
 
 ## Setup (Windows / PyCharm)
 
@@ -38,6 +39,20 @@ Python project for building a structured catalogue of MPSC learning resources an
 - Exports include `questions_sorted.csv`, `subject_index.csv`, `subtopic_index.csv`, `options_sorted.csv`, and `answers_explanations_sorted.csv`, in addition to the detailed audit reports.
 - The structured DB keeps IDs and bilingual names only when present in the source. It separates question options, answer-key label/selected option text, and Marathi/English explanations into their own tables. The full available source row is preserved in `questions.source_row_json`.
 - The original `mpsc_questions.db` is opened read-only and is never changed. If a structured DB already exists, the builder makes a timestamped backup before replacing it.
+- Automatic GitHub report sync runs at the end of the audit. To enable uploads, create a fine-grained personal access token scoped only to this repository with **Contents: Read and write** permission, then set it as the Windows user environment variable `MPSC_GITHUB_TOKEN`. Do not paste the token into code or commit it. Reports and the structured DB will be visible in this public repository.
+- To store the token securely from PowerShell (input is hidden), run:
+  ```powershell
+  $secure = Read-Host "GitHub token" -AsSecureString
+  $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+  try {
+      $token = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+      [Environment]::SetEnvironmentVariable("MPSC_GITHUB_TOKEN", $token, "User")
+      $env:MPSC_GITHUB_TOKEN = $token
+  } finally {
+      [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+  }
+  ```
+  Restart PyCharm after storing the user environment variable. Rerun `python audit_mpsc_dataset.py`; the latest report files are replaced in GitHub and the upload status is saved in `github_sync_manifest.json`.
 - The audit's PASS/INVALID labels describe structural checks only. Correct-answer factual accuracy needs independent question-wise verification against trusted references.
 - The API currently has no verified offset/page cursor, so resume preserves saved unique questions and per-filter progress rather than guaranteeing the exact next unseen server record.
 
