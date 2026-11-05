@@ -22,6 +22,8 @@ from typing import Any
 
 import pandas as pd
 
+from mpsc_question_db_builder import build_structured_outputs
+
 DEFAULT_DB = Path(__file__).resolve().parent / "mpsc_output" / "mpsc_questions.db"
 DEFAULT_OUT = Path(__file__).resolve().parent / "mpsc_output" / "data_quality_audit"
 PLACEHOLDERS = {"", "nan", "none", "null", "undefined", "n/a", "na", "-", "--", "---"}
@@ -298,8 +300,38 @@ def main() -> int:
     clean_path = args.out / "cleaned_questions_candidate.csv"
     duplicate_path = args.out / "exact_duplicates.csv"
     safe_csv(full, audit_path)
-    safe_csv(cleaned[df.columns.tolist()], clean_path)
+    audit_columns = [
+        "audit_status", "audit_errors", "audit_warnings",
+        "correct_option_normalized", "is_structurally_valid",
+        "content_fingerprint", "exact_duplicate_content",
+        "same_question_text_group_size",
+    ]
+    cleaned_export_columns = list(df.columns) + [
+        column for column in audit_columns if column in cleaned.columns
+    ]
+    cleaned_export = cleaned[cleaned_export_columns].copy()
+    safe_csv(cleaned_export, clean_path)
     safe_csv(exact_dups, duplicate_path)
+
+    structured_db_path = args.out.parent / "mpsc_questions_structured.db"
+    print("\\n[STRUCTURE] Building normalized subject/subtopic database...", flush=True)
+    structured_stats = build_structured_outputs(
+        cleaned_export,
+        args.out,
+        structured_db_path,
+        audit_columns,
+    )
+    print(
+        "[STRUCTURE DONE] "
+        f"subjects={structured_stats['subjects']} | "
+        f"subtopics={structured_stats['subtopics']} | "
+        f"questions={structured_stats['questions']} | "
+        f"options={structured_stats['options']} | "
+        f"answer rows={structured_stats['answers']} | "
+        f"explanations={structured_stats['explanations']} | "
+        f"integrity={structured_stats['integrity_check']}",
+        flush=True,
+    )
 
     missing_rows = []
     for column in df.columns:
@@ -366,6 +398,7 @@ def main() -> int:
         "exact_duplicate_rows_flagged": int(len(exact_dups)),
         "near_duplicate_pairs_found": int(similar_count),
         "near_duplicate_threshold": args.similarity,
+        "structured_database": structured_stats,
         "error_counts": dict(error_counts),
         "warning_counts": dict(warning_counts),
         "important_limit": (
@@ -381,6 +414,12 @@ def main() -> int:
             "subject_topic_summary": str(args.out / "subject_topic_summary.csv"),
             "answer_key_distribution": str(args.out / "answer_key_distribution.csv"),
             "near_duplicate_candidates": str(similarity_path) if similarity_path else None,
+            "structured_database": structured_stats["database_path"],
+            "questions_sorted": structured_stats["exports"]["questions_sorted"],
+            "subject_index": structured_stats["exports"]["subject_index"],
+            "subtopic_index": structured_stats["exports"]["subtopic_index"],
+            "options_sorted": structured_stats["exports"]["options_sorted"],
+            "answers_explanations_sorted": structured_stats["exports"]["answers_explanations_sorted"],
         },
     }
     summary_path = args.out / "audit_summary.json"
@@ -396,6 +435,12 @@ def main() -> int:
     print(f"Exact duplicate rows flagged:         {len(exact_dups):,}")
     print(f"Clean candidate rows:                 {len(cleaned):,}")
     print(f"Near-duplicate candidate pairs:       {similar_count:,}")
+    print(f"Structured SQLite database:           {structured_stats['database_path']}")
+    print(
+        "Subject/subtopic/options/explanations: "
+        f"{structured_stats['subjects']}/{structured_stats['subtopics']}/"
+        f"{structured_stats['options']}/{structured_stats['explanations']}"
+    )
     print("\n[OUTPUT]", args.out.resolve())
     print("[DONE] Original SQLite database was not modified.")
     print("[NOTE] Correct-answer factual accuracy needs independent verification.")
