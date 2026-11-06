@@ -1,0 +1,14 @@
+{
+  "source_file": "questions_sorted.csv",
+  "source_rows": 25181,
+  "subject_subtopic_combinations": 22,
+  "collision_records": 2,
+  "important_findings": [
+    "The Ancient History topic label is assigned to 9,356 Geography, 4,878 Marathi Grammar, and 1,931 Economics questions.",
+    "The History/Ancient History group contains 8,399 questions and requires period-level review.",
+    "Numeric subject_id=3 is reused by Geography of Maharashtra & India and Marathi Grammar.",
+    "Numeric pair subject_id=3/topic_id=7 is reused by Physiography and Tenses/Verb Moods labels.",
+    "Marathi grammar categories appear under two subject identities and need canonical alias review."
+  ],
+  "note": "Diagnostic aggregate only. These reports do not constitute verified per-question corrected mappings. No question rows were reassigned or deleted."
+}
