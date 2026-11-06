@@ -69,11 +69,19 @@ def _json_value(value: Any) -> Any:
 
 
 def _subject_key(row: dict[str, Any]) -> str:
+    """Build a collision-safe subject identity.
+
+    Source IDs are not globally reliable: the input currently reuses subject_id=3
+    for both Geography of Maharashtra & India and Marathi Grammar. Include the
+    stable slug with the ID so such rows remain distinct in the normalized DB.
+    """
     sid = _text(row.get("subject_id"))
     slug = _text(row.get("subject_slug")).casefold()
     name = _text(row.get("subject_name_en") or row.get("subject_name_mr")).casefold()
+    if sid and slug:
+        return "subject-id:" + sid + "|slug:" + slug
     if sid:
-        return "subject-id:" + sid
+        return "subject-id:" + sid + "|name:" + name if name else "subject-id:" + sid
     if slug:
         return "subject-slug:" + slug
     if name:
@@ -82,11 +90,18 @@ def _subject_key(row: dict[str, Any]) -> str:
 
 
 def _subtopic_key(row: dict[str, Any], subject_key: str) -> str:
+    """Build a collision-safe subtopic identity scoped to its subject.
+
+    Topic IDs can be reused across source subject records. Pair the topic ID
+    with its slug when available rather than assuming the numeric ID is unique.
+    """
     tid = _text(row.get("topic_id"))
     slug = _text(row.get("topic_slug")).casefold()
     name = _text(row.get("topic_name_en") or row.get("topic_name_mr")).casefold()
+    if tid and slug:
+        return subject_key + "|topic-id:" + tid + "|slug:" + slug
     if tid:
-        return subject_key + "|topic-id:" + tid
+        return subject_key + "|topic-id:" + tid + "|name:" + name if name else subject_key + "|topic-id:" + tid
     if slug:
         return subject_key + "|topic-slug:" + slug
     if name:
