@@ -1,0 +1,3 @@
+entity_type,subject_id,topic_id,row_count,conflicting_slugs,conflicting_names,details
+SUBJECT_ID_COLLISION,3,,5387,geography | marathi-grammar,Geography of Maharashtra & India | Marathi Grammar,"Same numeric subject_id maps to multiple subject slugs/names; subject identity must include both ID and slug."
+TOPIC_ID_COLLISION,3,7,56,geology-physiography | kaal-prakar-kriyapad-arth,Physiography and Mountain Ranges | Tenses and Verb Moods,"Same numeric subject_id/topic_id pair maps to multiple topic slugs/names; topic identity must include parent subject identity and topic slug."
