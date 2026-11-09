@@ -100,12 +100,17 @@ def sync_audit_outputs(
     structured_database: Path | None = None,
     repository: str = DEFAULT_REPOSITORY,
     branch: str = DEFAULT_BRANCH,
+    remote_directory: str = "mpsc_output/audit_reports/latest",
 ) -> dict[str, Any]:
     """Upload latest reports and the normalized SQLite DB to GitHub.
 
     The source collection DB is never uploaded by this function. Only generated
     audit outputs and the newly built structured DB are selected.
     """
+    remote_directory = remote_directory.strip("/")
+    if not remote_directory or any(part in {".", ".."} for part in remote_directory.split("/")):
+        raise ValueError("remote_directory must be a safe repository-relative path.")
+    remote_prefix = remote_directory + "/"
     token = os.getenv("MPSC_GITHUB_TOKEN") or os.getenv("GITHUB_TOKEN")
     manifest_path = output_dir / "github_sync_manifest.json"
     generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -158,8 +163,7 @@ def sync_audit_outputs(
             if local_path.resolve() == manifest_path.resolve():
                 continue
             remote_path = (
-                "mpsc_output/audit_reports/latest/"
-                + local_path.name
+                remote_prefix + local_path.name
             )
             result = _upload_file(
                 session, repository, branch, token, local_path, remote_path
@@ -180,7 +184,7 @@ def sync_audit_outputs(
         "status": "success" if failed_count == 0 else "partial",
         "repository": repository,
         "branch": branch,
-        "remote_directory": "mpsc_output/audit_reports/latest/",
+        "remote_directory": remote_prefix,
         "uploaded_count": uploaded_count,
         "failed_count": failed_count,
         "files": results,
@@ -198,7 +202,7 @@ def sync_audit_outputs(
             branch,
             token,
             manifest_path,
-            "mpsc_output/audit_reports/latest/github_sync_manifest.json",
+            remote_prefix + "github_sync_manifest.json",
         )
         if manifest_result["status"] != "uploaded":
             print(
@@ -235,6 +239,11 @@ def main() -> int:
     )
     parser.add_argument("--repository", default=DEFAULT_REPOSITORY)
     parser.add_argument("--branch", default=DEFAULT_BRANCH)
+    parser.add_argument(
+        "--remote-dir",
+        default="mpsc_output/audit_reports/latest",
+        help="Repository-relative destination directory for reports and the database.",
+    )
     args = parser.parse_args()
 
     if not args.reports_dir.exists():
@@ -247,6 +256,7 @@ def main() -> int:
         structured_database=args.db,
         repository=args.repository,
         branch=args.branch,
+        remote_directory=args.remote_dir,
     )
     if result.get("status") == "skipped_missing_token":
         return 2
