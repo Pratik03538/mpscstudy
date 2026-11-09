@@ -135,7 +135,7 @@ def sync_audit_outputs(
             "failed_count": 0,
             "message": (
                 "Set MPSC_GITHUB_TOKEN in the Windows user environment, then rerun "
-                "python audit_mpsc_dataset.py to sync reports."
+                "the same github_report_sync.py command to upload these files."
             ),
             "files": [],
         }
