@@ -1,0 +1,40 @@
+{
+  "total_questions": 25181,
+  "canonical_subject_count": 4,
+  "subject_counts": [
+    {
+      "subject_id": "economics",
+      "subject_name_en": "Economics",
+      "subject_name_mr": "अर्थशास्त्र",
+      "question_count": 1931,
+      "view": "questions_economics"
+    },
+    {
+      "subject_id": "geography",
+      "subject_name_en": "Geography",
+      "subject_name_mr": "भूगोल",
+      "question_count": 9357,
+      "view": "questions_geography"
+    },
+    {
+      "subject_id": "history",
+      "subject_name_en": "History",
+      "subject_name_mr": "इतिहास",
+      "question_count": 8403,
+      "view": "questions_history"
+    },
+    {
+      "subject_id": "marathi-grammar",
+      "subject_name_en": "Marathi Grammar",
+      "subject_name_mr": "मराठी व्याकरण",
+      "question_count": 5490,
+      "view": "questions_marathi_grammar"
+    }
+  ],
+  "integrity_check": "ok",
+  "foreign_key_errors": 0,
+  "topic_columns_in_questions_table": [],
+  "source_aliases_merged_by_same_slug": true,
+  "source_numeric_ids_preserved_per_question": true,
+  "note": "This database removes all topic/subtopic fields and groups questions by source subject_slug. It preserves original subject assignment; subject correctness has not been independently verified."
+}
