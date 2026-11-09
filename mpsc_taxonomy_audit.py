@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_INPUT = Path(__file__).resolve().parent / "mpsc_output" / "data_quality_audit" / "questions_sorted.csv"
-DEFAULT_OUT = Path(__file__).resolve().parent / "mpsc_output" / "data_quality_audit"
+DEFAULT_OUT = Path(__file__).resolve().parent / "reports" / "taxonomy"
 
 REQUIRED = {
     "id", "subject_id", "topic_id", "subject_slug", "topic_slug",
