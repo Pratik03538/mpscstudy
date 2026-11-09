@@ -1,0 +1,7 @@
+canonical_subject_id,canonical_subject_name_en,canonical_subject_name_mr,source_subject_id,source_subject_slug,source_subject_name_en,source_subject_name_mr,question_count,alias_action
+economics,Economics,अर्थशास्त्र,6,economics,Economics,अर्थशास्त्र,1931,CANONICAL
+geography,Geography,भूगोल,1,geography,Geography,भूगोल,9356,CANONICAL
+geography,Geography,भूगोल,3,geography,Geography of Maharashtra & India,महाराष्ट्र व भारताचा भूगोल,1,MERGED_BY_SAME_SLUG
+history,History,इतिहास,2,history,History,इतिहास,8403,CANONICAL
+marathi-grammar,Marathi Grammar,मराठी व्याकरण,3,marathi-grammar,Marathi Grammar,मराठी व्याकरण,5386,CANONICAL
+marathi-grammar,Marathi Grammar,मराठी व्याकरण,8,marathi-grammar,Marathi Grammar & Language,मराठी व्याकरण व भाषा,104,MERGED_BY_SAME_SLUG
