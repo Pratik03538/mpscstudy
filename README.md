@@ -36,7 +36,7 @@ Python project for building a structured catalogue of MPSC learning resources an
 - Re-sample previously stalled/empty filters explicitly: `python mpsc_quiz_full_downloader.py --resample-finished`.
 - Run the complete audit + cleaning + sorting + normalized DB build in one command: `python audit_mpsc_dataset.py`.
 - Export one random question from every subtopic: `python sample_one_question_per_subtopic.py` (optional reproducible selection: `python sample_one_question_per_subtopic.py --seed 12345`).
-- Run subject/subtopic taxonomy diagnostics after `questions_sorted.csv` exists: `python mpsc_taxonomy_audit.py`. Reports are written locally under `mpsc_output/data_quality_audit/`; reviewed aggregate copies are committed under `mpsc_output/audit_reports/taxonomy/`.
+- Run subject/subtopic taxonomy diagnostics after `questions_sorted.csv` exists: `python mpsc_taxonomy_audit.py`. The script reads `mpsc_output/data_quality_audit/questions_sorted.csv` and writes only aggregate taxonomy diagnostics (no full question corpus) to the tracked `reports/taxonomy/` directory so they can be committed to GitHub.
 - After the audit has already completed, upload existing local reports/database without repeating the analysis: `python github_report_sync.py`.
 - Skip TF-IDF near-duplicate similarity for a faster run: `python audit_mpsc_dataset.py --similarity 0`.
 - Use a non-default source database/output directory: `python audit_mpsc_dataset.py --db path/to/mpsc_questions.db --out path/to/audit_output`.
