@@ -1,0 +1,5 @@
+subject_id,subject_slug,subject_name_en,subject_name_mr,question_count,source_subject_ids,source_names_en,source_names_mr,question_table_view
+economics,economics,Economics,अर्थशास्त्र,1931,6,Economics,अर्थशास्त्र,questions_economics
+geography,geography,Geography,भूगोल,9357,1;3,Geography | Geography of Maharashtra & India,भूगोल | महाराष्ट्र व भारताचा भूगोल,questions_geography
+history,history,History,इतिहास,8403,2,History,इतिहास,questions_history
+marathi-grammar,marathi-grammar,Marathi Grammar,मराठी व्याकरण,5490,3;8,Marathi Grammar | Marathi Grammar & Language,मराठी व्याकरण | मराठी व्याकरण व भाषा,questions_marathi_grammar
