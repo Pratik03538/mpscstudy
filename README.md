@@ -39,6 +39,7 @@ Python project for building a structured catalogue of MPSC learning resources an
 - Export one random question from every subtopic: `python sample_one_question_per_subtopic.py` (optional reproducible selection: `python sample_one_question_per_subtopic.py --seed 12345`).
 - Run subject/subtopic taxonomy diagnostics after `questions_sorted.csv` exists: `python mpsc_taxonomy_audit.py`. The script reads `mpsc_output/data_quality_audit/questions_sorted.csv` and writes only aggregate taxonomy diagnostics (no full question corpus) to the tracked `reports/taxonomy/` directory so they can be committed to GitHub.
 - Build the topic-free subject-wise question database: `python build_subject_only_db.py`. The database is `mpsc_output/mpsc_subject_only.db`; subject count/alias reports and per-subject CSV exports are under `mpsc_output/subject_only/`.
+- Upload the subject-only database and its reports to a dedicated GitHub folder (after setting `MPSC_GITHUB_TOKEN`): `python github_report_sync.py --reports-dir mpsc_output/subject_only --db mpsc_output/mpsc_subject_only.db --remote-dir reports/subject_only`. This publishes the DB and the subject-wise CSV exports without rerunning the audit.
 - After the audit has already completed, upload existing local reports/database without repeating the analysis: `python github_report_sync.py`.
 - Skip TF-IDF near-duplicate similarity for a faster run: `python audit_mpsc_dataset.py --similarity 0`.
 - Use a non-default source database/output directory: `python audit_mpsc_dataset.py --db path/to/mpsc_questions.db --out path/to/audit_output`.
@@ -65,7 +66,7 @@ Python project for building a structured catalogue of MPSC learning resources an
 
 ## Local data
 
-Runtime databases, CSV exports, and API audit reports are stored under `mpsc_output/` and are intentionally excluded from Git. Keep local databases and exports out of the public repository.
+Working/source databases and the full raw collection exports remain under `mpsc_output/` and are excluded from Git. The subject-only database is also built locally by default; it can be intentionally published to `reports/subject_only/` with the explicit GitHub sync command above. Do not publish source collection databases, credentials, cookies, or unreviewed private exports.
 
 ## Authorized data use
 
