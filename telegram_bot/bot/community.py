@@ -382,6 +382,8 @@ async def _accept_battle(query, battle_id: str, user) -> str:
     battle = _get_battle(battle_id)
     if not battle:
         return "Challenge not found."
+    if getattr(user, "is_bot", False):
+        return "Bot accounts cannot accept player battles."
     if str(user.id) == battle["challenger_id"]:
         return "You created this challenge. Another player must accept it."
     _upsert_profile(user)
@@ -704,12 +706,24 @@ async def community_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await query.answer("This question is closed.", show_alert=True)
             elif result == "waiting":
                 await query.answer("Answer recorded. Waiting for your opponent.")
-                text = (
-                    f"⚔️ <b>BATTLE · QUESTION {int(battle['current_position']) + 1}/{battle['total_questions']}</b>\n\n"
-                    f"{_esc(battle['challenger_name'])}: {'✅ Submitted' if _has_battle_answer(data[1], battle['challenger_id'], int(data[2])) else '⏳ Waiting'}\n"
-                    f"{_esc(battle['opponent_name'])}: {'✅ Submitted' if _has_battle_answer(data[1], battle['opponent_id'], int(data[2])) else '⏳ Waiting'}\n\n"
-                    "Waiting for both answers. Correctness is hidden."
-                )
+                battle = _get_battle(data[1])
+                with state_connection(STATE_DB) as con:
+                    qrow = con.execute(
+                        "SELECT question_id FROM battle_questions WHERE battle_id=? AND position=?",
+                        (data[1], int(data[2])),
+                    ).fetchone()
+                qdata = _question(qrow["question_id"]) if qrow else None
+                text = _format_mcq(
+                    qdata, f"⚔️ BATTLE · QUESTION {int(battle['current_position']) + 1}/{battle['total_questions']}"
+                ) if qdata and battle else "⚔️ Battle answer received."
+                if battle:
+                    text += (
+                        f"\n\n{_esc(battle['challenger_name'])}: "
+                        f"{'✅ Submitted' if _has_battle_answer(data[1], battle['challenger_id'], int(data[2])) else '⏳ Waiting'}"
+                        f"\n{_esc(battle['opponent_name'])}: "
+                        f"{'✅ Submitted' if _has_battle_answer(data[1], battle['opponent_id'], int(data[2])) else '⏳ Waiting'}"
+                        "\n\n<i>Waiting for both answers. Correctness is hidden.</i>"
+                    )
                 await query.edit_message_text(
                     text, parse_mode=ParseMode.HTML,
                     reply_markup=_battle_answer_keyboard(data[1], int(data[2])),
