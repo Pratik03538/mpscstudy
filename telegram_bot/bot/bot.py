@@ -8,6 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
+from telegram.error import NetworkError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from db import (
@@ -327,13 +328,40 @@ def main() -> None:
     if not subjects:
         raise SystemExit("No subjects found in the question database.")
     logger.info("Loaded %d subjects / %s MCQs.", len(subjects), sum(int(s["question_count"]) for s in subjects))
-    app = Application.builder().token(token).post_init(post_init).build()
+    # The default PTB connection timeout is short for slower or filtered networks.
+    # Use explicit timeouts for both normal Bot API requests and long polling.
+    app = (
+        Application.builder()
+        .token(token)
+        .connect_timeout(30)
+        .read_timeout(30)
+        .write_timeout(30)
+        .pool_timeout(30)
+        .get_updates_connect_timeout(30)
+        .get_updates_read_timeout(40)
+        .get_updates_write_timeout(30)
+        .get_updates_pool_timeout(30)
+        .post_init(post_init)
+        .build()
+    )
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("subjects", subjects_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(callback_handler))
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    try:
+        # Retry startup a few times for intermittent TLS/network delays.
+        app.run_polling(allowed_updates=Update.ALL_TYPES, bootstrap_retries=5)
+    except NetworkError as exc:
+        logger.error(
+            "Cannot reach the Telegram Bot API. Check connectivity to api.telegram.org:443, "
+            "firewall/antivirus, and any required HTTPS proxy. Network error: %s",
+            type(exc).__name__,
+        )
+        raise SystemExit(
+            "Telegram connection failed. Run the network checks in telegram_bot/README.md. "
+            "The local question database is valid and was not changed."
+        ) from None
 
 
 if __name__ == "__main__":
