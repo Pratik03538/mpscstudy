@@ -11,6 +11,7 @@ from datetime import datetime, time as day_time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from dotenv import load_dotenv
 from telegram import (
     InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultArticle,
     InputTextMessageContent, Update, WebAppInfo,
@@ -24,6 +25,7 @@ from telegram.ext import (
 from db import get_subject, get_subjects, get_user_stats, question_connection, state_connection
 
 ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT / ".env")
 QUESTION_DB = Path(os.getenv("BOT_DB_PATH", str(ROOT / "database" / "mpsc_subject_only.db"))).resolve()
 STATE_DB = Path(os.getenv("BOT_STATE_DB_PATH", str(ROOT / "data" / "bot_progress.sqlite3"))).resolve()
 CHANNEL_ID = os.getenv("PUBLIC_CHANNEL_ID", "").strip()
