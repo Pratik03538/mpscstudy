@@ -28,6 +28,7 @@ A subject-only MPSC question bank bot with personal practice, scheduled official
 - A 3-second countdown starts the match
 - Same questions and options are shown in one editable battle message
 - Only the two players can answer; group members see submitted/waiting status but not answer correctness
+- Open challenges expire after 10 minutes by default; accepted matches expire if both players do not confirm START within 2 minutes
 - If a player does not answer within the question timer, that question is recorded as unanswered
 - Final result and community battle ranking are published in the group
 - `/duel`, `/battle`, `/top`, `/rank`, `/profile`, `/ids`
@@ -87,6 +88,7 @@ The bot uses long polling, so the process must stay running. JobQueue handles da
 - In `@BotFather`, run `/setinline` and enable inline mode.
 - Users can then type `@YourBot history` in a chat, select the result, and publish an open challenge card.
 - Group commands such as `/challenge history` do not need inline mode.
+- With Telegram privacy mode enabled, send group commands as `/challenge@YourBotUsername history`; alternatively disable privacy with `/setprivacy` in `@BotFather` and re-add the bot to the group. Telegram's privacy mode controls which group commands/messages the bot receives.
 
 ### 5. Daily event time
 Default configuration is 8:20 PM reminder and 8:30 PM event time in India. Change `EVENT_HOUR`, `EVENT_MINUTE`, `EVENT_QUESTION_COUNT`, or `EVENT_QUESTION_SECONDS` in `.env`, then restart the bot.
