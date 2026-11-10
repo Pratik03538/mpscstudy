@@ -28,6 +28,10 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     handlers=[logging.StreamHandler(), logging.FileHandler(LOG_DIR / "bot.log", encoding="utf-8")],
 )
+# httpx logs full request URLs at INFO, and Telegram Bot API URLs contain the
+# bot token in the path. Suppress those logs so tokens are not written to bot.log.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger("mpsc-study-bot")
 
 
