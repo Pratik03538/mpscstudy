@@ -32,4 +32,17 @@ python -m pip install -r requirements.txt
 python .\bot\bot.py
 ```
 
-Or run `.\run_bot.ps1` after setting the token. The bot uses long polling, so the process must stay running to receive Telegram updates.
+Or run `.\\run_bot.ps1` after setting the token. The bot uses long polling, so the process must stay running to receive Telegram updates.
+
+
+## Telegram connection troubleshooting
+
+If startup reports `telegram.error.TimedOut`, the question database is not the cause. The bot must connect to Telegram over HTTPS at `api.telegram.org:443`. The bot configures 30-second connection/write/read timeouts and retries startup up to five times, but a blocked or unreachable route still needs to be fixed at the network level.
+
+Run this token-free diagnostic from this folder:
+
+```powershell
+.\test_telegram_network.ps1
+```
+
+A successful DNS lookup, `TcpTestSucceeded : True`, and an HTTP response from `curl.exe` indicate DNS/TCP/TLS connectivity. An HTTP 404/405 at the API root is acceptable for this connectivity test; no bot method or token is being called. A timeout/failure indicates a DNS, ISP/router, firewall/antivirus or required HTTPS-proxy issue. Do not paste your bot token into a diagnostic command or chat.
