@@ -11,7 +11,10 @@ from telegram.constants import ParseMode
 from telegram.error import NetworkError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
-from community import register_community_handlers, setup_daily_jobs
+from community import (
+    battle_status_command, events_command, profile_command,
+    register_community_handlers, setup_daily_jobs,
+)
 from db import (
     advance_session, create_quiz_session, get_question, get_subject,
     get_subjects, get_user_stats, initialize_state_db, record_answer, stop_session,
@@ -351,6 +354,9 @@ async def post_init(application: Application) -> None:
         BotCommand("duel", "Open a public duel"),
         BotCommand("battle", "View your active battle"),
         BotCommand("top", "Community battle leaderboard"),
+        BotCommand("event_top", "Latest official event ranking"),
+        BotCommand("event_now", "Admin: start a test event"),
+        BotCommand("event_stop", "Admin: stop current event"),
         BotCommand("help", "How to use this bot"),
     ])
     setup_daily_jobs(application)
