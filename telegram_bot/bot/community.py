@@ -113,6 +113,18 @@ def initialize_community_db(path: Path = STATE_DB) -> None:
             PRIMARY KEY(battle_id,user_id,position)
         );
         CREATE INDEX IF NOT EXISTS idx_battle_answers_user ON battle_answers(user_id,battle_id);
+        CREATE TABLE IF NOT EXISTS battle_player_totals(
+            user_id TEXT PRIMARY KEY,
+            battles_played INTEGER NOT NULL DEFAULT 0,
+            wins INTEGER NOT NULL DEFAULT 0,
+            correct_total INTEGER NOT NULL DEFAULT 0,
+            elapsed_total INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS battle_awards(
+            battle_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            PRIMARY KEY(battle_id,user_id)
+        );
         CREATE TABLE IF NOT EXISTS official_events(
             event_id TEXT PRIMARY KEY,
             event_date TEXT NOT NULL,
@@ -421,7 +433,7 @@ async def _begin_battle_after_countdown(application: Application, battle_id: str
         """, (_now(), _now(), battle_id))
     if cur.rowcount != 1:
         return
-    await _render_battle_question(application.bot, battle_id)
+    await _render_battle_question(application.bot, battle_id, application)
 
 
 def _battle_progress(battle_id: str) -> tuple[int, int]:
@@ -436,7 +448,7 @@ def _battle_progress(battle_id: str) -> tuple[int, int]:
     return len(rows), len(rows)
 
 
-async def _render_battle_question(bot, battle_id: str) -> None:
+async def _render_battle_question(bot, battle_id: str, application: Application | None = None) -> None:
     battle = _get_battle(battle_id)
     if not battle:
         return
@@ -474,9 +486,7 @@ async def _render_battle_question(bot, battle_id: str) -> None:
          InlineKeyboardButton("D", callback_data=f"ba|{battle_id}|{position}|D")],
     ])
     await _edit_battle(bot, battle, text, markup)
-    if battle["chat_id"]:
-        application = getattr(bot, "_application", None)
-        if application and application.job_queue:
+    if battle["chat_id"] and application and application.job_queue:
             application.job_queue.run_once(
                 battle_question_timeout,
                 when=BATTLE_QUESTION_SECONDS,
@@ -569,14 +579,19 @@ async def _render_battle_result(bot, battle_id: str) -> None:
         winner, winner_id = "Draw", None
     for uid, stat in ((battle["challenger_id"], a), (battle["opponent_id"], b)):
         with state_connection(STATE_DB) as con:
-            con.execute("""
-                INSERT INTO battle_player_totals(user_id,battles_played,wins,correct_total,elapsed_total)
-                VALUES(?,1,?,?,?)
-                ON CONFLICT(user_id) DO UPDATE SET
-                  battles_played=battles_played+1,wins=wins+excluded.wins,
-                  correct_total=correct_total+excluded.correct_total,
-                  elapsed_total=elapsed_total+excluded.elapsed_total
-            """, (uid, int(winner_id == uid), int(stat["correct"]), int(stat["elapsed"] or 0)))
+            inserted = con.execute(
+                "INSERT OR IGNORE INTO battle_awards(battle_id,user_id) VALUES(?,?)",
+                (battle_id, uid),
+            )
+            if inserted.rowcount == 1:
+                con.execute("""
+                    INSERT INTO battle_player_totals(user_id,battles_played,wins,correct_total,elapsed_total)
+                    VALUES(?,1,?,?,?)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                      battles_played=battles_played+1,wins=wins+excluded.wins,
+                      correct_total=correct_total+excluded.correct_total,
+                      elapsed_total=elapsed_total+excluded.elapsed_total
+                """, (uid, int(winner_id == uid), int(stat["correct"]), int(stat["elapsed"] or 0)))
     text = (
         "🏁 <b>BATTLE COMPLETED</b>\n\n"
         + (f"🏆 <b>Winner: {_esc(winner)}</b>\n\n" if winner_id else "🤝 <b>It's a draw!</b>\n\n")
@@ -622,7 +637,7 @@ async def battle_question_timeout(context: ContextTypes.DEFAULT_TYPE) -> None:
     if latest and latest["status"] == "completed":
         await _render_battle_result(context.bot, battle_id)
     else:
-        await _render_battle_question(context.bot, battle_id)
+        await _render_battle_question(context.bot, battle_id, context.application)
 
 
 async def _cancel_battle(query, battle_id: str, user_id: int) -> str:
@@ -828,12 +843,13 @@ async def reminder_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def daily_event_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        await start_official_event(context.bot)
+        await start_official_event(context.application)
     except Exception:
         logger.exception("Scheduled official event failed")
 
 
-async def start_official_event(bot, channel_id: str | None = None, manual: bool = False) -> str:
+async def start_official_event(application: Application, channel_id: str | None = None, manual: bool = False) -> str:
+    bot = application.bot
     target = channel_id or CHANNEL_ID
     if not target:
         return "Set PUBLIC_CHANNEL_ID in .env before starting official events."
@@ -874,8 +890,7 @@ async def start_official_event(bot, channel_id: str | None = None, manual: bool 
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None,
     )
-    queue = getattr(bot, "_application", None)
-    job_queue = queue.job_queue if queue else None
+    job_queue = application.job_queue
     if not job_queue:
         return "Event was created, but JobQueue is unavailable. Install python-telegram-bot[job-queue]."
     for position in range(len(qids)):
@@ -1008,7 +1023,7 @@ async def event_now_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if update.effective_user.id not in ADMIN_IDS:
         await update.effective_message.reply_text("This command is admin-only.")
         return
-    result = await start_official_event(context.bot, manual=True)
+    result = await start_official_event(context.application, manual=True)
     await update.effective_message.reply_text(result)
 
 
