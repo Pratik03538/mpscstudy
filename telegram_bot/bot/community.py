@@ -42,6 +42,8 @@ EVENT_MINUTE = int(os.getenv("EVENT_MINUTE", "30"))
 EVENT_QUESTION_COUNT = max(5, min(int(os.getenv("EVENT_QUESTION_COUNT", "15")), 30))
 EVENT_QUESTION_SECONDS = max(15, int(os.getenv("EVENT_QUESTION_SECONDS", "35")))
 BATTLE_QUESTION_SECONDS = max(20, int(os.getenv("BATTLE_QUESTION_SECONDS", "45")))
+OPEN_CHALLENGE_TTL = max(60, int(os.getenv("OPEN_CHALLENGE_TTL", "600")))
+START_CONFIRM_TTL = max(30, int(os.getenv("START_CONFIRM_TTL", "120")))
 TZ = ZoneInfo("Asia/Kolkata")
 logger = logging.getLogger("mpsc-community")
 
@@ -343,7 +345,55 @@ async def _edit_battle(bot, battle: dict, text: str, markup: InlineKeyboardMarku
         )
 
 
-async def _post_open_battle(update: Update, subject: dict) -> None:
+def _schedule_challenge_expiry(application: Application, battle_id: str) -> None:
+    if application.job_queue:
+        application.job_queue.run_once(
+            expire_open_battle, when=OPEN_CHALLENGE_TTL,
+            data={"battle_id": battle_id}, name=f"battle-open-expiry-{battle_id}",
+        )
+
+
+async def expire_open_battle(context: ContextTypes.DEFAULT_TYPE) -> None:
+    battle_id = context.job.data["battle_id"]
+    battle = _get_battle(battle_id)
+    if not battle or battle["status"] != "open":
+        return
+    with state_connection(STATE_DB) as con:
+        con.execute(
+            "UPDATE battles SET status='expired',finished_at=? WHERE battle_id=? AND status='open'",
+            (_now(), battle_id),
+        )
+    battle = _get_battle(battle_id)
+    try:
+        await _edit_battle(
+            context.bot, battle,
+            "⌛ <b>CHALLENGE EXPIRED</b>\nNo opponent accepted this open challenge in time.",
+        )
+    except Exception:
+        logger.exception("Could not update expired challenge card %s", battle_id)
+
+
+async def expire_unstarted_battle(context: ContextTypes.DEFAULT_TYPE) -> None:
+    battle_id = context.job.data["battle_id"]
+    battle = _get_battle(battle_id)
+    if not battle or battle["status"] != "accepted":
+        return
+    with state_connection(STATE_DB) as con:
+        con.execute(
+            "UPDATE battles SET status='expired',finished_at=? WHERE battle_id=? AND status='accepted'",
+            (_now(), battle_id),
+        )
+    battle = _get_battle(battle_id)
+    try:
+        await _edit_battle(
+            context.bot, battle,
+            "⌛ <b>BATTLE NOT STARTED</b>\nBoth players did not confirm START in time. Create a new public challenge.",
+        )
+    except Exception:
+        logger.exception("Could not update unstarted battle card %s", battle_id)
+
+
+async def _post_open_battle(update: Update, subject: dict, application: Application | None = None) -> None:
     battle = _create_battle_record(str(update.effective_chat.id), None, update.effective_user, subject)
     message = await update.effective_message.reply_text(
         _battle_card_text(battle), parse_mode=ParseMode.HTML, reply_markup=_battle_keyboard(battle)
@@ -352,6 +402,8 @@ async def _post_open_battle(update: Update, subject: dict) -> None:
         con.execute(
             "UPDATE battles SET message_id=? WHERE battle_id=?", (message.message_id, battle["battle_id"])
         )
+    if application:
+        _schedule_challenge_expiry(application, battle["battle_id"])
 
 
 async def challenge_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -369,7 +421,7 @@ async def challenge_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         return
     if subject:
-        await _post_open_battle(update, subject)
+        await _post_open_battle(update, subject, context.application)
     else:
         await update.effective_message.reply_text(
             "⚔️ <b>Choose challenge subject</b>\nFirst eligible member to accept becomes your opponent.",
@@ -382,7 +434,7 @@ async def duel_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await challenge_command(update, context)
 
 
-async def _accept_battle(query, battle_id: str, user) -> str:
+async def _accept_battle(query, battle_id: str, user, application: Application) -> str:
     battle = _get_battle(battle_id)
     if not battle:
         return "Challenge not found."
@@ -403,6 +455,11 @@ async def _accept_battle(query, battle_id: str, user) -> str:
     await query.edit_message_text(
         _battle_card_text(battle), parse_mode=ParseMode.HTML, reply_markup=_battle_keyboard(battle)
     )
+    if application.job_queue:
+        application.job_queue.run_once(
+            expire_unstarted_battle, when=START_CONFIRM_TTL,
+            data={"battle_id": battle_id}, name=f"battle-start-expiry-{battle_id}",
+        )
     return "Challenge accepted! Both players must press their own START button."
 
 
@@ -665,7 +722,7 @@ async def _cancel_battle(query, battle_id: str, user_id: int) -> str:
     return "Challenge cancelled."
 
 
-async def _create_inline_battle(query, subject_id: str, user) -> str:
+async def _create_inline_battle(query, subject_id: str, user, application: Application) -> str:
     subject = get_subject(QUESTION_DB, subject_id)
     if not subject:
         return "Subject not found."
@@ -673,6 +730,7 @@ async def _create_inline_battle(query, subject_id: str, user) -> str:
     await query.edit_message_text(
         _battle_card_text(battle), parse_mode=ParseMode.HTML, reply_markup=_battle_keyboard(battle)
     )
+    _schedule_challenge_expiry(application, battle["battle_id"])
     return "Public challenge card activated in this chat."
 
 
@@ -687,16 +745,18 @@ async def community_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await query.answer("Subject not found.", show_alert=True)
                 return
             await query.answer()
-            await _post_open_battle(update, subject)
+            await _post_open_battle(update, subject, context.application)
             return
         if action == "ic" and len(data) == 3:
             if str(update.effective_user.id) != data[2]:
                 await query.answer("Only the person who shared this challenge card can activate it.", show_alert=True)
                 return
-            await query.answer(await _create_inline_battle(query, data[1], update.effective_user), show_alert=True)
+            await query.answer(
+                await _create_inline_battle(query, data[1], update.effective_user, context.application)
+            )
             return
         if action == "ac" and len(data) == 2:
-            result = await _accept_battle(query, data[1], update.effective_user)
+            result = await _accept_battle(query, data[1], update.effective_user, context.application)
             await query.answer(result, show_alert=("already" in result.lower() or "only" in result.lower()))
             return
         if action == "rd" and len(data) == 3:
@@ -754,7 +814,7 @@ async def community_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             subject = get_subject(QUESTION_DB, data[1])
             if subject and update.effective_chat:
                 await query.answer("Creating a new open rematch challenge.")
-                await _post_open_battle(update, subject)
+                await _post_open_battle(update, subject, context.application)
             else:
                 await query.answer("Rematch unavailable.", show_alert=True)
             return
