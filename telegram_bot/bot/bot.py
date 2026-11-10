@@ -11,6 +11,7 @@ from telegram.constants import ParseMode
 from telegram.error import NetworkError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
+from community import register_community_handlers, setup_daily_jobs
 from db import (
     advance_session, create_quiz_session, get_question, get_subject,
     get_subjects, get_user_stats, initialize_state_db, record_answer, stop_session,
@@ -43,6 +44,9 @@ def home_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📚 Choose Subject", callback_data="subjects")],
         [InlineKeyboardButton("📊 My Progress", callback_data="stats"),
+         InlineKeyboardButton("👤 My Profile", callback_data="profile")],
+        [InlineKeyboardButton("🏆 Official Events", callback_data="events")],
+        [InlineKeyboardButton("⚔️ Battle Arena", callback_data="battle"),
          InlineKeyboardButton("ℹ️ Help", callback_data="help")],
     ])
 
@@ -199,10 +203,33 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await show_stats(update, edit=False)
 
 
+async def weak_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    stats = get_user_stats(STATE_DB, update.effective_user.id)
+    rows = [r for r in stats["subject_stats"] if int(r["answered"]) >= 5]
+    if not rows:
+        await update.effective_message.reply_text(
+            "Weak-subject analysis ke liye har subject mein kam se kam 5 questions practice karo."
+        )
+        return
+    rows.sort(key=lambda r: (r["correct"] / r["answered"]) if r["answered"] else 1)
+    lines = ["<b>Your improvement priorities</b>"]
+    for row in rows:
+        accuracy = 100 * row["correct"] / row["answered"] if row["answered"] else 0
+        lines.append(f"• {row['subject_name']}: {accuracy:.1f}% ({row['correct']}/{row['answered']})")
+    await update.effective_message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text(
-        "<b>Commands</b>\n/start — Main menu\n/subjects — Browse subjects\n/stats — Your score\n/help — Help\n\n"
-        "Choose a subject, select 10/20/50 MCQs, then tap A/B/C/D. The bot shows the stored answer key and any available explanation.",
+        "<b>MPSC Study Bot</b>\n\n"
+        "<b>Personal</b>\n/start — Dashboard\n/subjects — Subject-wise practice\n"
+        "/stats — Practice progress\n/profile — Your profile\n/weak — Weak subject analysis\n"
+        "/events — Next official channel event\n\n"
+        "<b>Discussion group</b>\n/challenge — Open public battle\n"
+        "/challenge history — Open History challenge\n/duel — Open duel\n"
+        "/battle — Current battle\n/top — Community battle ranking\n"
+        "/event_top — Latest official event ranking\n/help — Commands\n\n"
+        "Channel-event scores, practice scores, and battle ratings are stored separately.",
         parse_mode=ParseMode.HTML,
         reply_markup=home_keyboard(),
     )
@@ -317,8 +344,16 @@ async def post_init(application: Application) -> None:
         BotCommand("start", "Open the main menu"),
         BotCommand("subjects", "Choose an MPSC subject"),
         BotCommand("stats", "View your practice progress"),
+        BotCommand("profile", "View your student profile"),
+        BotCommand("weak", "Find subjects to improve"),
+        BotCommand("events", "See official channel events"),
+        BotCommand("challenge", "Create an open group battle"),
+        BotCommand("duel", "Open a public duel"),
+        BotCommand("battle", "View your active battle"),
+        BotCommand("top", "Community battle leaderboard"),
         BotCommand("help", "How to use this bot"),
     ])
+    setup_daily_jobs(application)
 
 
 def main() -> None:
@@ -348,10 +383,13 @@ def main() -> None:
         .post_init(post_init)
         .build()
     )
+    register_community_handlers(app)
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("subjects", subjects_command))
     app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("weak", weak_command))
     app.add_handler(CommandHandler("help", help_command))
+    # Keep the general practice callback handler after the more specific community handler.
     app.add_handler(CallbackQueryHandler(callback_handler))
     try:
         # Retry startup a few times for intermittent TLS/network delays.
