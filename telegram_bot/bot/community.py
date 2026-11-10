@@ -7,7 +7,7 @@ import os
 import random
 import secrets
 import time
-from datetime import datetime, time as day_time
+from datetime import datetime, time as day_time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -1164,9 +1164,12 @@ def setup_daily_jobs(application: Application) -> None:
     if not application.job_queue:
         logger.warning("PTB JobQueue is missing; install python-telegram-bot[job-queue].")
         return
+    reminder_dt = datetime.now(TZ).replace(
+        hour=EVENT_HOUR, minute=EVENT_MINUTE, second=0, microsecond=0
+    ) - timedelta(minutes=10)
+    reminder_time = day_time(hour=reminder_dt.hour, minute=reminder_dt.minute, tzinfo=TZ)
     application.job_queue.run_daily(
-        reminder_job, time=day_time(hour=EVENT_HOUR, minute=max(0, EVENT_MINUTE - 10), tzinfo=TZ),
-        name="daily-event-reminder",
+        reminder_job, time=reminder_time, name="daily-event-reminder",
     )
     application.job_queue.run_daily(
         daily_event_job, time=day_time(hour=EVENT_HOUR, minute=EVENT_MINUTE, tzinfo=TZ),
