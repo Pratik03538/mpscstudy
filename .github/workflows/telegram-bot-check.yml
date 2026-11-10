@@ -1,0 +1,30 @@
+name: Telegram bot checks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "telegram_bot/**"
+      - ".github/workflows/telegram-bot-check.yml"
+  pull_request:
+    paths:
+      - "telegram_bot/**"
+      - ".github/workflows/telegram-bot-check.yml"
+
+jobs:
+  syntax-and-schema:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install bot and Mini App dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r telegram_bot/requirements.txt
+          python -m pip install -r telegram_bot/miniapp/requirements.txt
+      - name: Compile Python files
+        run: python -m compileall -q telegram_bot/bot telegram_bot/miniapp
+      - name: Test SQLite schemas
+        run: python -m unittest discover -s telegram_bot/tests -v
