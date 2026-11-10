@@ -32,7 +32,7 @@ python -m pip install -r requirements.txt
 python .\bot\bot.py
 ```
 
-Or run `.\\run_bot.ps1` after setting the token. The bot uses long polling, so the process must stay running to receive Telegram updates.
+Or run `.\run_bot.ps1` after setting the token. The bot uses long polling, so the process must stay running to receive Telegram updates.
 
 
 ## Telegram connection troubleshooting
