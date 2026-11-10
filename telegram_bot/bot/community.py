@@ -689,7 +689,10 @@ async def community_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await query.answer()
             await _post_open_battle(update, subject)
             return
-        if action == "ic" and len(data) == 2:
+        if action == "ic" and len(data) == 3:
+            if str(update.effective_user.id) != data[2]:
+                await query.answer("Only the person who shared this challenge card can activate it.", show_alert=True)
+                return
             await query.answer(await _create_inline_battle(query, data[1], update.effective_user), show_alert=True)
             return
         if action == "ac" and len(data) == 2:
@@ -1151,7 +1154,10 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 f"⚔️ MPSC {subject['subject_name_en']} Challenge\nTap below to open a public challenge."
             ),
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("Create Open Challenge", callback_data=f"ic|{subject['subject_id']}")
+                InlineKeyboardButton(
+                    "Create Open Challenge",
+                    callback_data=f"ic|{subject['subject_id']}|{update.effective_user.id}",
+                )
             ]]),
         ))
     await update.inline_query.answer(results[:20], cache_time=10, is_personal=True)
