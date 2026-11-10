@@ -268,6 +268,15 @@ def _battle_keyboard(battle: dict) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([])
 
 
+def _battle_answer_keyboard(battle_id: str, position: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("A", callback_data=f"ba|{battle_id}|{position}|A"),
+         InlineKeyboardButton("B", callback_data=f"ba|{battle_id}|{position}|B")],
+        [InlineKeyboardButton("C", callback_data=f"ba|{battle_id}|{position}|C"),
+         InlineKeyboardButton("D", callback_data=f"ba|{battle_id}|{position}|D")],
+    ])
+
+
 def _battle_card_text(battle: dict) -> str:
     title = "⚔️ OPEN PUBLIC CHALLENGE" if battle["status"] == "open" else "⚔️ CHALLENGE ACCEPTED"
     text = (
@@ -479,15 +488,10 @@ async def _render_battle_question(bot, battle_id: str, application: Application 
         f"{'✅ Answer submitted' if _has_battle_answer(battle_id, battle['opponent_id'], position) else '⏳ Answering'}"
         "\n\n<i>Answer correctness stays hidden until the match ends.</i>"
     )
-    markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton("A", callback_data=f"ba|{battle_id}|{position}|A"),
-         InlineKeyboardButton("B", callback_data=f"ba|{battle_id}|{position}|B")],
-        [InlineKeyboardButton("C", callback_data=f"ba|{battle_id}|{position}|C"),
-         InlineKeyboardButton("D", callback_data=f"ba|{battle_id}|{position}|D")],
-    ])
+    markup = _battle_answer_keyboard(battle_id, position)
     await _edit_battle(bot, battle, text, markup)
-    if battle["chat_id"] and application and application.job_queue:
-            application.job_queue.run_once(
+    if application and application.job_queue:
+        application.job_queue.run_once(
                 battle_question_timeout,
                 when=BATTLE_QUESTION_SECONDS,
                 data={"battle_id": battle_id, "position": position},
@@ -706,10 +710,13 @@ async def community_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     f"{_esc(battle['opponent_name'])}: {'✅ Submitted' if _has_battle_answer(data[1], battle['opponent_id'], int(data[2])) else '⏳ Waiting'}\n\n"
                     "Waiting for both answers. Correctness is hidden."
                 )
-                await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=query.message.reply_markup)
+                await query.edit_message_text(
+                    text, parse_mode=ParseMode.HTML,
+                    reply_markup=_battle_answer_keyboard(data[1], int(data[2])),
+                )
             elif result == "advance":
                 await query.answer("Both answers recorded. Next question!")
-                await _render_battle_question(context.bot, data[1])
+                await _render_battle_question(context.bot, data[1], context.application)
             elif result == "completed":
                 await query.answer("Battle completed!")
                 await _render_battle_result(context.bot, data[1])
@@ -896,7 +903,7 @@ async def start_official_event(application: Application, channel_id: str | None 
     for position in range(len(qids)):
         job_queue.run_once(
             publish_event_question,
-            when=position * EVENT_QUESTION_SECONDS,
+            when=max(1, position * EVENT_QUESTION_SECONDS),
             data={"event_id": event_id, "position": position},
             name=f"event-question-{event_id}-{position}",
         )
