@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#101827">
+  <title>MPSC Arena</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root{color-scheme:dark;--bg:#0b1220;--panel:#121e31;--panel2:#17263c;--text:#f4f7fb;--muted:#9aabc1;--line:#263850;--blue:#6aa9ff;--cyan:#56d6c2;--gold:#f5c56b;--red:#ff8585}
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(900px 500px at 15% -10%,#1c3b62 0%,transparent 60%),radial-gradient(700px 400px at 110% 20%,#163d40 0%,transparent 55%),var(--bg);color:var(--text);font:15px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
+    .wrap{max-width:780px;margin:auto;padding:18px 16px 42px}.top{display:flex;justify-content:space-between;align-items:center;margin:8px 0 24px}.brand{display:flex;gap:11px;align-items:center;font-weight:800;letter-spacing:.02em}.mark{width:42px;height:42px;border-radius:14px;background:linear-gradient(135deg,#3978d9,#49c6b6);display:grid;place-items:center;font-size:21px;box-shadow:0 10px 35px #1d72b644}.eyebrow{color:var(--cyan);font-size:11px;font-weight:800;letter-spacing:.16em}.hero{padding:22px;border:1px solid #38516c;border-radius:24px;background:linear-gradient(120deg,#1a3554e8,#142b3be8);box-shadow:0 20px 60px #0003}.hero h1{font-size:28px;line-height:1.12;margin:8px 0}.hero p{color:#c0d0e1;margin:8px 0 0}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:15px 0}.card{background:linear-gradient(160deg,var(--panel),#0f1a2b);border:1px solid var(--line);border-radius:18px;padding:16px;min-width:0}.metric{font-size:27px;font-weight:850;letter-spacing:-.04em;margin:7px 0 0}.muted{color:var(--muted);font-size:12px}.section{display:flex;align-items:center;justify-content:space-between;margin:25px 2px 10px}.section h2{font-size:16px;margin:0}.subject{margin:12px 0}.subject-head{display:flex;justify-content:space-between;font-size:13px;margin-bottom:7px}.bar{height:8px;border-radius:99px;background:#26374c;overflow:hidden}.bar span{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--blue),var(--cyan))}.tabs{display:flex;gap:8px;margin:18px 0 6px}.tab{border:1px solid var(--line);color:var(--muted);background:#101c2c;border-radius:99px;padding:9px 14px;font-weight:700}.tab.active{background:#214875;color:#fff;border-color:#3978b7}.row{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid #24354a}.row:last-child{border:0}.rank{font-weight:850;color:var(--gold);width:25px}.name{font-weight:700;overflow-wrap:anywhere}.pill{display:inline-flex;align-items:center;padding:4px 9px;border-radius:99px;background:#173c40;color:#80edce;font-size:11px;font-weight:800}.empty{color:var(--muted);padding:15px 0}.notice{background:#302817;border:1px solid #65502e;color:#ffdfa1;padding:12px 14px;border-radius:13px;margin:14px 0;font-size:13px}.foot{margin-top:28px;color:#73869e;text-align:center;font-size:11px}.hidden{display:none!important}.loading{color:var(--muted);padding:16px 0}
+    @media(min-width:620px){.grid{grid-template-columns:repeat(4,minmax(0,1fr))}.hero h1{font-size:34px}.wrap{padding-top:28px}}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><div class="mark">♟</div><div>MPSC ARENA<div class="eyebrow">LEARN · COMPETE · IMPROVE</div></div></div>
+    <span class="pill" id="connection">CONNECTING</span>
+  </header>
+  <section class="hero">
+    <div class="eyebrow">STUDENT DASHBOARD</div>
+    <h1>Welcome back,<br><span id="studentName">Student</span></h1>
+    <p>Your practice, battles and official event performance in one place.</p>
+  </section>
+  <div id="notice" class="notice hidden"></div>
+  <section class="grid">
+    <div class="card"><div class="muted">PRACTICE QUESTIONS</div><div class="metric" id="answered">—</div><div class="muted">Attempted</div></div>
+    <div class="card"><div class="muted">ACCURACY</div><div class="metric" id="accuracy">—</div><div class="muted">Practice answers</div></div>
+    <div class="card"><div class="muted">BATTLE WINS</div><div class="metric" id="wins">—</div><div class="muted">Community matches</div></div>
+    <div class="card"><div class="muted">OFFICIAL EVENTS</div><div class="metric" id="events">—</div><div class="muted">Entered</div></div>
+  </section>
+  <nav class="tabs">
+    <button class="tab active" data-tab="overview">Overview</button>
+    <button class="tab" data-tab="official">Official Rank</button>
+    <button class="tab" data-tab="community">Battle Rank</button>
+    <button class="tab" data-tab="battles">My Battles</button>
+  </nav>
+  <section id="overview" class="panel">
+    <div class="section"><h2>Subject performance</h2><span class="muted">Based on real attempts</span></div>
+    <div class="card" id="subjects"><div class="loading">Loading subject statistics…</div></div>
+    <div class="section"><h2>Quick note</h2></div>
+    <div class="card muted">Official channel-event scores, personal practice and group battle ratings are maintained separately. Practice or battle points never inflate the official channel leaderboard.</div>
+  </section>
+  <section id="official" class="panel hidden">
+    <div class="section"><h2>Latest official event</h2><span class="muted">Channel MCQs only</span></div>
+    <div class="card" id="officialList"><div class="loading">Loading official leaderboard…</div></div>
+  </section>
+  <section id="community" class="panel hidden">
+    <div class="section"><h2>Community battle leaderboard</h2><span class="muted">Real completed matches</span></div>
+    <div class="card" id="communityList"><div class="loading">Loading battle rankings…</div></div>
+  </section>
+  <section id="battles" class="panel hidden">
+    <div class="section"><h2>Recent battles</h2><span class="muted">Your match history</span></div>
+    <div class="card" id="battleList"><div class="loading">Loading your battles…</div></div>
+  </section>
+  <footer class="foot">MPSC ARENA · Telegram-authenticated student dashboard</footer>
+</div>
+<script>
+(() => {
+  const tg = window.Telegram?.WebApp;
+  if (tg) { tg.ready(); tg.expand(); }
+  const initData = tg?.initData || "";
+  const $ = id => document.getElementById(id);
+  const headers = {"X-Telegram-Init-Data": initData};
+  function notice(message){ $("notice").textContent=message; $("notice").classList.remove("hidden"); }
+  function rankRows(items, kind){
+    if(!items?.length) return '<div class="empty">No verified results yet. Be the first to compete.</div>';
+    return items.map((x,i)=>{
+      const detail = kind==="official" ? `${x.correct}/${x.answered} · ${x.points} pts` :
+        kind==="community" ? `${x.wins} wins · ${x.battles} battles` : `${x.status} · ${x.subject}`;
+      return `<div class="row"><span class="rank">${i+1}</span><span class="name" style="flex:1">${escapeHtml(x.name || x.opponent || "")}</span><span class="muted">${escapeHtml(detail)}</span></div>`;
+    }).join("");
+  }
+  function escapeHtml(value){return String(value).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+  async function get(path){const res=await fetch(path,{headers});if(!res.ok)throw new Error(res.status===401?"Open this Mini App from the Telegram bot to verify your account.":"Could not load dashboard data.");return res.json();}
+  async function load(){
+    if(!initData){$("connection").textContent="NOT IN TELEGRAM";notice("Open this dashboard using the Telegram bot's Mini App button. Profile data is not loaded in a normal browser.");return;}
+    try{
+      const p=await get("/api/profile");
+      $("connection").textContent="CONNECTED";
+      $("connection").classList.add("pill");
+      $("studentName").textContent=p.display_name;
+      $("answered").textContent=p.practice.answered.toLocaleString();
+      $("accuracy").textContent=p.practice.accuracy+"%";
+      $("wins").textContent=p.battles.wins.toLocaleString();
+      $("events").textContent=p.official_events_entered.toLocaleString();
+      const subjects=p.subjects||[];
+      $("subjects").innerHTML=subjects.length?subjects.map(s=>`<div class="subject"><div class="subject-head"><b>${escapeHtml(s.name)}</b><span>${s.accuracy}% · ${s.answered} attempted</span></div><div class="bar"><span style="width:${Math.max(0,Math.min(100,s.accuracy))}%"></span></div></div>`).join(""):'<div class="empty">No subject practice recorded yet.</div>';
+      const [official,community,battles]=await Promise.all([
+        get("/api/leaderboard/official"),get("/api/leaderboard/community"),get("/api/battles/recent")
+      ]);
+      $("officialList").innerHTML=official.event?rankRows(official.items,"official"):`<div class="empty">No completed official event yet.</div>`;
+      $("communityList").innerHTML=rankRows(community.items,"community");
+      $("battleList").innerHTML=rankRows(battles.items,"battles");
+    }catch(e){$("connection").textContent="OFFLINE";notice(e.message);}
+  }
+  document.querySelectorAll(".tab").forEach(btn=>btn.addEventListener("click",()=>{
+    document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x===btn));
+    document.querySelectorAll(".panel").forEach(x=>x.classList.toggle("hidden",x.id!==btn.dataset.tab));
+  }));
+  load();
+})();
+</script>
+</body>
+</html>
