@@ -256,6 +256,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 "Use Subjects → choose a subject → select quiz length → answer A/B/C/D.",
                 reply_markup=home_keyboard(),
             )
+        elif action == "profile":
+            await profile_command(update, context)
+        elif action == "events":
+            await events_command(update, context)
+        elif action == "battle":
+            await battle_status_command(update, context)
         elif action == "s" and len(data) == 2:
             await show_subject_detail(update, data[1])
         elif action == "q" and len(data) == 3:
@@ -349,6 +355,7 @@ async def post_init(application: Application) -> None:
         BotCommand("stats", "View your practice progress"),
         BotCommand("profile", "View your student profile"),
         BotCommand("weak", "Find subjects to improve"),
+        BotCommand("ids", "Get your Telegram user and chat IDs"),
         BotCommand("events", "See official channel events"),
         BotCommand("challenge", "Create an open group battle"),
         BotCommand("duel", "Open a public duel"),
