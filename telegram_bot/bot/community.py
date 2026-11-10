@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from telegram import (
     InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultArticle,
-    InputTextMessageContent, Update,
+    InputTextMessageContent, Update, WebAppInfo,
 )
 from telegram.constants import ChatType, ParseMode
 from telegram.ext import (
@@ -27,6 +27,8 @@ ROOT = Path(__file__).resolve().parents[1]
 QUESTION_DB = Path(os.getenv("BOT_DB_PATH", str(ROOT / "database" / "mpsc_subject_only.db"))).resolve()
 STATE_DB = Path(os.getenv("BOT_STATE_DB_PATH", str(ROOT / "data" / "bot_progress.sqlite3"))).resolve()
 CHANNEL_ID = os.getenv("PUBLIC_CHANNEL_ID", "").strip()
+CHANNEL_LINK = os.getenv("PUBLIC_CHANNEL_LINK", "").strip()
+DISCUSSION_GROUP_ID = os.getenv("DISCUSSION_GROUP_ID", "").strip()
 DISCUSSION_GROUP_LINK = os.getenv("DISCUSSION_GROUP_LINK", "").strip()
 MINI_APP_URL = os.getenv("MINI_APP_URL", "").strip()
 ADMIN_IDS = {
@@ -238,14 +240,14 @@ def _format_mcq(row: dict, heading: str) -> str:
     subject = _esc(row.get("subject_name_en") or row.get("subject_name_mr") or "")
     q_mr, q_en = _esc(row.get("question_mr")), _esc(row.get("question_en"))
     stem = "\n\n".join(x for x in (q_mr, q_en if q_en and q_en != q_mr else "") if x)
+    if len(stem) > 2400:
+        stem = stem[:2399] + "…"
     opts = (
-        "<b>A.</b> " + _esc(row.get("option_a")) + "\n" +
-        "<b>B.</b> " + _esc(row.get("option_b")) + "\n" +
-        "<b>C.</b> " + _esc(row.get("option_c")) + "\n" +
-        "<b>D.</b> " + _esc(row.get("option_d"))
+        "<b>A.</b> " + _esc(row.get("option_a"))[:350] + "\n" +
+        "<b>B.</b> " + _esc(row.get("option_b"))[:350] + "\n" +
+        "<b>C.</b> " + _esc(row.get("option_c"))[:350] + "\n" +
+        "<b>D.</b> " + _esc(row.get("option_d"))[:350]
     )
-    if len(stem) > 2800:
-        stem = stem[:2799] + "…"
     return f"<b>{_esc(heading)}</b> · {subject}\n\n{stem}\n\n{opts}"
 
 
@@ -760,6 +762,14 @@ async def community_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             pass
 
 
+async def ids_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.effective_message.reply_text(
+        f"Your Telegram user ID: `{update.effective_user.id}`\n"
+        f"Current chat ID: `{update.effective_chat.id}`\n\n"
+        "Use these values in ADMIN_USER_IDS, PUBLIC_CHANNEL_ID, or DISCUSSION_GROUP_ID as appropriate."
+    )
+
+
 async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     _upsert_profile(user)
@@ -780,8 +790,10 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         f"⚔️ Battles: <b>{played}</b> · Wins: <b>{wins}</b>"
     )
     rows = []
-    if MINI_APP_URL:
-        rows.append([InlineKeyboardButton("📊 Open Modern Dashboard", url=MINI_APP_URL)])
+    if MINI_APP_URL and update.effective_chat and update.effective_chat.type == ChatType.PRIVATE:
+        rows.append([InlineKeyboardButton("📊 Open Modern Dashboard", web_app=WebAppInfo(url=MINI_APP_URL))])
+    elif MINI_APP_URL:
+        rows.append([InlineKeyboardButton("📊 Open Dashboard", url=MINI_APP_URL)])
     await update.effective_message.reply_text(
         text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(rows) if rows else None
     )
@@ -853,6 +865,16 @@ async def _post_event_reminder(bot) -> None:
     )
     await bot.send_message(chat_id=CHANNEL_ID, text=text, parse_mode=ParseMode.HTML,
                            reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None)
+    if DISCUSSION_GROUP_ID:
+        group_markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("📢 Open Official Channel", url=CHANNEL_LINK)
+        ]]) if CHANNEL_LINK else None
+        await bot.send_message(
+            chat_id=DISCUSSION_GROUP_ID,
+            text="⏰ <b>MPSC Daily Championship in 10 minutes!</b>\nJoin the official channel and take part in today's timed MCQ event.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=group_markup,
+        )
 
 
 async def reminder_job(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -874,6 +896,8 @@ async def start_official_event(application: Application, channel_id: str | None 
     target = channel_id or CHANNEL_ID
     if not target:
         return "Set PUBLIC_CHANNEL_ID in .env before starting official events."
+    if not application.job_queue:
+        return "Install python-telegram-bot[job-queue] to enable timed question publishing."
     with state_connection(STATE_DB) as con:
         active = con.execute(
             "SELECT event_id FROM official_events WHERE status='running' LIMIT 1"
@@ -911,19 +935,27 @@ async def start_official_event(application: Application, channel_id: str | None 
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None,
     )
+    if DISCUSSION_GROUP_ID:
+        group_markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("📢 Open Official Channel", url=CHANNEL_LINK)
+        ]]) if CHANNEL_LINK else None
+        await bot.send_message(
+            chat_id=DISCUSSION_GROUP_ID,
+            text=f"🏆 <b>MPSC {label} is LIVE!</b>\n{len(qids)} timed questions are being published in the official channel now.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=group_markup,
+        )
     job_queue = application.job_queue
-    if not job_queue:
-        return "Event was created, but JobQueue is unavailable. Install python-telegram-bot[job-queue]."
     for position in range(len(qids)):
         job_queue.run_once(
             publish_event_question,
-            when=max(1, position * EVENT_QUESTION_SECONDS),
+            when=1 + position * EVENT_QUESTION_SECONDS,
             data={"event_id": event_id, "position": position},
             name=f"event-question-{event_id}-{position}",
         )
     job_queue.run_once(
         finish_event_job,
-        when=len(qids) * EVENT_QUESTION_SECONDS + 2,
+        when=1 + len(qids) * EVENT_QUESTION_SECONDS + 2,
         data={"event_id": event_id},
         name=f"event-finish-{event_id}",
     )
@@ -1033,7 +1065,18 @@ async def finish_official_event(bot, event_id: str) -> None:
         lines.append("\n<i>Ranking is based only on completed official channel-event attempts. "
                      "Ties are resolved by lower total answer time.</i>")
         lines.append("\n💬 Use the discussion group for battles and explanations.")
-    await bot.send_message(chat_id=event["channel_id"], text="\n".join(lines), parse_mode=ParseMode.HTML)
+    result_text = "\n".join(lines)
+    await bot.send_message(chat_id=event["channel_id"], text=result_text, parse_mode=ParseMode.HTML)
+    if DISCUSSION_GROUP_ID:
+        markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🏆 View Official Channel", url=CHANNEL_LINK)
+        ]]) if CHANNEL_LINK else None
+        await bot.send_message(
+            chat_id=DISCUSSION_GROUP_ID,
+            text=result_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=markup,
+        )
 
 
 async def finish_event_job(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1135,6 +1178,7 @@ def register_community_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("challenge", challenge_command))
     application.add_handler(CommandHandler("duel", duel_command))
     application.add_handler(CommandHandler("profile", profile_command))
+    application.add_handler(CommandHandler("ids", ids_command))
     application.add_handler(CommandHandler("top", top_command))
     application.add_handler(CommandHandler("rank", top_command))
     application.add_handler(CommandHandler("battle", battle_status_command))
