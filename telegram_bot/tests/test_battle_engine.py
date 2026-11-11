@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 import sys
 import tempfile
 import time
@@ -57,7 +58,7 @@ class IndependentBattleTests(unittest.TestCase):
         qcon.commit()
         qcon.close()
         self.battle_id = "testbattle"
-        with sqlite3.connect(self.state_db) as con:
+        with closing(sqlite3.connect(self.state_db)) as con, con:
             con.execute("""
                 INSERT INTO battles(
                     battle_id,challenger_id,challenger_name,opponent_id,opponent_name,
