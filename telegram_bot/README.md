@@ -21,16 +21,15 @@ A subject-only MPSC question bank bot with personal practice, scheduled official
 - Event scores are stored separately from personal practice and group battles
 
 ### Discussion group
-- `/challenge` opens a subject picker
-- `/challenge history`, `/challenge geography`, `/challenge economics`, `/challenge marathi` create an open public challenge
-- First eligible member to press Accept becomes the opponent (challenger cannot accept their own challenge)
-- Both players must independently confirm START
-- A 3-second countdown starts the match
-- Same questions and options are shown in one editable battle message
-- Only the two players can answer; group members see submitted/waiting status but not answer correctness
-- Open challenges expire after 10 minutes by default; accepted matches expire if both players do not confirm START within 2 minutes
-- If a player does not answer within the question timer, that question is recorded as unanswered
-- Final result and community battle ranking are published in the group
+- `/challenge` opens a subject picker; `/challenge history`, `/challenge geography`, `/challenge economics`, and `/challenge marathi` create a challenge
+- The first eligible accepter is sent to the challenger for approval. The challenger can accept that player or change the accepter; a declined player cannot reclaim the same challenge
+- Both confirmed players use one clear **I'm ready** control; a 3-second countdown starts the match
+- The group message then exposes an **Open Battle Room** Mini App deep link. Telegram requires each player to tap it; bots cannot forcibly open a Mini App on another user's device
+- Questions and answers are private to each authenticated player in the Mini App. Each player advances independently; one player's slow answer or disconnect never blocks the other's next question
+- Maximum 10 questions and one shared 10-minute server deadline. If both players finish early, the match closes early; otherwise unanswered questions are recorded as zero when the deadline expires
+- Scoring: 100 points per correct answer; correct points decide the winner and lower total completion time breaks a tie. Accuracy, time, and points are shown for both
+- Completed results are published back to the originating chat and count only toward community battle ranking, never the official channel-event leaderboard
+- Full history is available from the Mini App: both selections, correctness, per-question response time, cumulative points after each question, and the correct answer
 - `/duel`, `/battle`, `/top`, `/rank`, `/profile`, `/ids`
 
 ### Inline challenge sharing
@@ -63,7 +62,7 @@ python .\bot\bot.py
 
 Or run `./run_bot.ps1` after configuring `.env`.
 
-The bot uses long polling, so the process must stay running. JobQueue handles daily events and battle question timeouts.
+The bot uses long polling, so the process must stay running. JobQueue handles daily events, challenge expiry, battle deadlines, and result publishing.
 
 ## Telegram setup (required)
 
@@ -93,8 +92,8 @@ The bot uses long polling, so the process must stay running. JobQueue handles da
 ### 5. Daily event time
 Default configuration is 8:20 PM reminder and 8:30 PM event time in India. Change `EVENT_HOUR`, `EVENT_MINUTE`, `EVENT_QUESTION_COUNT`, or `EVENT_QUESTION_SECONDS` in `.env`, then restart the bot.
 
-### 6. Mini App
-See [miniapp/README.md](miniapp/README.md). The app needs a public HTTPS URL and a web process that reads the same persistent state database as the bot. Use `MINI_APP_URL` only after deployment and after configuring the app in `@BotFather`.
+### 6. Mini App battle rooms
+See [miniapp/README.md](miniapp/README.md). The Mini App must be deployed over HTTPS, and the bot and web process must share the exact same persistent `BOT_STATE_DB_PATH` plus access to the question database. Create a named Mini App with `@BotFather` (for example through `/newapp`), set its HTTPS domain, then put the deployed URL in `MINI_APP_URL` and its BotFather short name in `MINI_APP_SHORT_NAME`. Restart the bot. The battle card deep link uses `https://t.me/<bot_username>/<short_name>?startapp=battle_<id>`; a player must tap it because Telegram does not allow a bot to force-open an app on a user's device. The Mini App also accepts `startapp=history_<id>` for the completed audit.
 
 ## Data integrity and limitations
 - The original question database is opened read-only.
