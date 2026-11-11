@@ -62,8 +62,8 @@ class IndependentBattleTests(unittest.TestCase):
                 INSERT INTO battles(
                     battle_id,challenger_id,challenger_name,opponent_id,opponent_name,
                     subject_id,subject_name,status,challenger_ready,opponent_ready,
-                    total_questions,created_at
-                ) VALUES(?,?,?,?,?,? ,?,'countdown',1,1,10,?)
+                    total_questions,created_at,engine_version
+                ) VALUES(?,?,?,?,?,? ,?,'countdown',1,1,10,?,2)
             """, (
                 self.battle_id, "101", "Alice", "202", "Bob",
                 "history", "History", time.time(),
