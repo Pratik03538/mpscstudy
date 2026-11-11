@@ -84,7 +84,7 @@ railway link
 Select the project, production environment, and deployed service when prompted. Then upload the local database. Replace the volume name below with the exact name shown in Railway:
 
 ```powershell
-railway volume files --volume mpsc-arena-data upload ".\mpsc_output\mpsc_subject_only.db" /mpsc_subject_only.db
+railway volume files --volume mpsc-arena-data upload ".\telegram_bot\database\mpsc_subject_only.db" /mpsc_subject_only.db
 railway volume files --volume mpsc-arena-data list /
 ```
 
