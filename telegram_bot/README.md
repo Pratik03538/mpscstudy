@@ -22,7 +22,7 @@ A subject-only MPSC question bank bot with personal practice, scheduled official
 
 ### Discussion group
 - `/challenge` opens a subject picker; `/challenge history`, `/challenge geography`, `/challenge economics`, and `/challenge marathi` create a challenge
-- The first eligible accepter is sent to the challenger for approval. The challenger can accept that player or change the accepter; a declined player cannot reclaim the same challenge
+- When a member accepts, the challenger receives private **Accept player** / **Change player** controls. If the challenger has not started the bot and Telegram blocks the DM, protected fallback controls stay on the challenge card. A declined player cannot reclaim that challenge
 - Both confirmed players use one clear **I'm ready** control; a 3-second countdown starts the match
 - The group message then exposes an **Open Battle Room** Mini App deep link. Telegram requires each player to tap it; bots cannot forcibly open a Mini App on another user's device
 - Questions and answers are private to each authenticated player in the Mini App. Each player advances independently; one player's slow answer or disconnect never blocks the other's next question
