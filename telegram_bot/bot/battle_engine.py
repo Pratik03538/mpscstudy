@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import os
 import time
 from pathlib import Path
 
 from db import question_connection, state_connection
 
 MAX_QUESTIONS = 10
-DURATION_SECONDS = max(60, min(int(os.getenv('BATTLE_DURATION_SECONDS', '600')), 600))
+DURATION_SECONDS = 10 * 60
 POINTS_PER_CORRECT = 100
 
 
