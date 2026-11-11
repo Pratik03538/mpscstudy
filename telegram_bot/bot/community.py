@@ -23,6 +23,10 @@ from telegram.ext import (
 )
 
 from db import get_subject, get_subjects, get_user_stats, question_connection, state_connection
+from battle_engine import (
+    DURATION_SECONDS as BATTLE_DURATION_SECONDS, MAX_QUESTIONS as BATTLE_MAX_QUESTIONS,
+    begin_battle, get_battle_history, initialize_battle_schema,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
@@ -33,6 +37,8 @@ CHANNEL_LINK = os.getenv("PUBLIC_CHANNEL_LINK", "").strip()
 DISCUSSION_GROUP_ID = os.getenv("DISCUSSION_GROUP_ID", "").strip()
 DISCUSSION_GROUP_LINK = os.getenv("DISCUSSION_GROUP_LINK", "").strip()
 MINI_APP_URL = os.getenv("MINI_APP_URL", "").strip()
+MINI_APP_SHORT_NAME = os.getenv("MINI_APP_SHORT_NAME", "").strip()
+BOT_USERNAME = ""
 ADMIN_IDS = {
     int(value.strip()) for value in os.getenv("ADMIN_USER_IDS", "").split(",")
     if value.strip().isdigit()
@@ -41,7 +47,6 @@ EVENT_HOUR = int(os.getenv("EVENT_HOUR", "20"))
 EVENT_MINUTE = int(os.getenv("EVENT_MINUTE", "30"))
 EVENT_QUESTION_COUNT = max(5, min(int(os.getenv("EVENT_QUESTION_COUNT", "15")), 30))
 EVENT_QUESTION_SECONDS = max(15, int(os.getenv("EVENT_QUESTION_SECONDS", "35")))
-BATTLE_QUESTION_SECONDS = max(20, int(os.getenv("BATTLE_QUESTION_SECONDS", "45")))
 OPEN_CHALLENGE_TTL = max(60, int(os.getenv("OPEN_CHALLENGE_TTL", "600")))
 START_CONFIRM_TTL = max(30, int(os.getenv("START_CONFIRM_TTL", "120")))
 TZ = ZoneInfo("Asia/Kolkata")
@@ -163,6 +168,7 @@ def initialize_community_db(path: Path = STATE_DB) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_event_answers_user ON official_event_answers(user_id,event_id);
         """)
+    initialize_battle_schema(path)
 
 
 def _upsert_profile(user) -> None:
@@ -255,51 +261,71 @@ def _format_mcq(row: dict, heading: str) -> str:
     return f"<b>{_esc(heading)}</b> · {subject}\n\n{stem}\n\n{opts}"
 
 
-def _battle_keyboard(battle: dict) -> InlineKeyboardMarkup:
+def _battle_app_url(battle_id: str) -> str:
+    if not BOT_USERNAME or not MINI_APP_SHORT_NAME:
+        return ""
+    return "https://t.me/" + BOT_USERNAME + "/" + MINI_APP_SHORT_NAME + "?startapp=battle_" + battle_id
+
+
+def _battle_keyboard(battle: dict) -> InlineKeyboardMarkup | None:
+    battle_id = battle["battle_id"]
     if battle["status"] == "open":
-        rows = [[InlineKeyboardButton("⚔️ Accept Challenge", callback_data=f"ac|{battle['battle_id']}")]]
-        rows.append([InlineKeyboardButton("✖ Cancel challenge", callback_data=f"ca|{battle['battle_id']}")])
-        return InlineKeyboardMarkup(rows)
-    if battle["status"] == "accepted":
         return InlineKeyboardMarkup([
-            [InlineKeyboardButton(
-                ("✅ " if battle["challenger_ready"] else "▶️ ") + "START · Challenger",
-                callback_data=f"rd|{battle['battle_id']}|c",
-            )],
-            [InlineKeyboardButton(
-                ("✅ " if battle["opponent_ready"] else "▶️ ") + "START · Accepter",
-                callback_data=f"rd|{battle['battle_id']}|o",
-            )],
+            [InlineKeyboardButton("⚔️ Accept Challenge", callback_data=f"ac|{battle_id}")],
+            [InlineKeyboardButton("Cancel", callback_data=f"ca|{battle_id}")],
         ])
-    return InlineKeyboardMarkup([])
-
-
-def _battle_answer_keyboard(battle_id: str, position: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("A", callback_data=f"ba|{battle_id}|{position}|A"),
-         InlineKeyboardButton("B", callback_data=f"ba|{battle_id}|{position}|B")],
-        [InlineKeyboardButton("C", callback_data=f"ba|{battle_id}|{position}|C"),
-         InlineKeyboardButton("D", callback_data=f"ba|{battle_id}|{position}|D")],
-    ])
+    if battle["status"] == "pending_approval":
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Accept player", callback_data=f"ch|{battle_id}|approve"),
+            InlineKeyboardButton("↩️ Change player", callback_data=f"ch|{battle_id}|change"),
+        ]])
+    if battle["status"] == "accepted":
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ I'm ready", callback_data=f"rd|{battle_id}")
+        ]])
+    if battle["status"] == "active":
+        url = _battle_app_url(battle_id)
+        return InlineKeyboardMarkup([[InlineKeyboardButton("⚔️ Open Battle Room", url=url)]]) if url else None
+    if battle["status"] == "completed":
+        url = _battle_app_url(battle_id)
+        if url:
+            return InlineKeyboardMarkup([[
+                InlineKeyboardButton("📋 Full match history", url=url.replace("startapp=battle_", "startapp=history_"))
+            ]])
+    return None
 
 
 def _battle_card_text(battle: dict) -> str:
-    title = "⚔️ OPEN PUBLIC CHALLENGE" if battle["status"] == "open" else "⚔️ CHALLENGE ACCEPTED"
+    status = battle["status"]
+    titles = {
+        "open": "⚔️ OPEN PUBLIC CHALLENGE",
+        "pending_approval": "⚔️ PLAYER ACCEPTED · APPROVAL NEEDED",
+        "accepted": "⚔️ CHALLENGE CONFIRMED",
+        "countdown": "⚔️ BATTLE STARTING",
+        "active": "⚔️ BATTLE LIVE",
+        "completed": "🏁 BATTLE COMPLETED",
+    }
+    opponent = battle.get("opponent_name") or "Waiting for a player to accept…"
     text = (
-        f"<b>{title}</b>\n\n"
+        f"<b>{titles.get(status, '⚔️ BATTLE')}</b>\n\n"
         f"Challenger: <b>{_esc(battle['challenger_name'])}</b>\n"
-        f"Opponent: <b>{_esc(battle.get('opponent_name') or 'Waiting for first acceptance…')}</b>\n"
+        f"Opponent: <b>{_esc(opponent)}</b>\n"
         f"Subject: <b>{_esc(battle['subject_name'])}</b>\n"
-        f"Questions: <b>{battle['total_questions']}</b> · Time per question: <b>{BATTLE_QUESTION_SECONDS}s</b>\n"
+        f"Questions: <b>{min(BATTLE_MAX_QUESTIONS, int(battle['total_questions']))}</b> · Total time: <b>10 minutes</b>"
     )
-    if battle["status"] == "accepted":
+    if status == "pending_approval":
+        text += "\n\n<i>Only the challenger can approve this player or change the opponent.</i>"
+    elif status == "accepted":
         text += (
-            "\n<b>Both players must confirm START.</b>\n"
-            f"Challenger: {'✅ Ready' if battle['challenger_ready'] else '⏳ Waiting'}\n"
-            f"Accepter: {'✅ Ready' if battle['opponent_ready'] else '⏳ Waiting'}"
+            "\n\nChallenger: " + ("✅ Ready" if battle["challenger_ready"] else "⏳ Not ready")
+            + "\nOpponent: " + ("✅ Ready" if battle["opponent_ready"] else "⏳ Not ready")
+            + "\nBoth players tap “I'm ready” to start."
         )
+    elif status == "countdown":
+        text += "\n\n✅ Both players ready. Starting in 3 seconds…"
+    elif status == "active":
+        text += "\n\nBoth players answer independently in the Battle Room. Your progress never waits for the other player."
     return text
-
 
 def _get_battle(battle_id: str) -> dict | None:
     with state_connection(STATE_DB) as con:
@@ -310,8 +336,8 @@ def _get_battle(battle_id: str) -> dict | None:
 def _create_battle_record(
     chat_id: str | None, inline_message_id: str | None, creator, subject: dict
 ) -> dict:
-    qids = _select_question_ids(str(subject["subject_id"]), 10)
-    if len(qids) < 5:
+    qids = _select_question_ids(str(subject["subject_id"]), BATTLE_MAX_QUESTIONS)
+    if len(qids) < BATTLE_MAX_QUESTIONS:
         raise ValueError("Not enough answer-key-complete questions for this subject.")
     battle_id = secrets.token_hex(4)
     stamp = _now()
@@ -442,39 +468,77 @@ async def _accept_battle(query, battle_id: str, user, application: Application) 
         return "Bot accounts cannot accept player battles."
     if str(user.id) == battle["challenger_id"]:
         return "You created this challenge. Another player must accept it."
-    _upsert_profile(user)
-    name = ("@" + user.username) if user.username else user.full_name
     with state_connection(STATE_DB) as con:
+        declined = con.execute(
+            "SELECT 1 FROM battle_declined_users WHERE battle_id=? AND user_id=?",
+            (battle_id, str(user.id)),
+        ).fetchone()
+        if declined:
+            return "The challenger asked for a different opponent for this challenge."
+        name = ("@" + user.username) if user.username else user.full_name
         cur = con.execute("""
-            UPDATE battles SET opponent_id=?,opponent_name=?,status='accepted',accepted_at=?
+            UPDATE battles SET opponent_id=?,opponent_name=?,status='pending_approval',accepted_at=?
             WHERE battle_id=? AND status='open' AND opponent_id IS NULL
         """, (str(user.id), name, _now(), battle_id))
     if cur.rowcount != 1:
-        return "Challenge already accepted, expired, or cancelled."
+        return "Challenge already has an accepter or is no longer open."
+    _upsert_profile(user)
     battle = _get_battle(battle_id)
-    await query.edit_message_text(
-        _battle_card_text(battle), parse_mode=ParseMode.HTML, reply_markup=_battle_keyboard(battle)
+    await _edit_battle(
+        application.bot, battle, _battle_card_text(battle), _battle_keyboard(battle)
     )
-    if application.job_queue:
-        application.job_queue.run_once(
-            expire_unstarted_battle, when=START_CONFIRM_TTL,
-            data={"battle_id": battle_id}, name=f"battle-start-expiry-{battle_id}",
-        )
-    return "Challenge accepted! Both players must press their own START button."
+    return "Your acceptance was sent to the challenger for approval."
 
 
-async def _ready_battle(query, battle_id: str, role: str, user_id: int, application: Application) -> str:
+async def _resolve_opponent(query, battle_id: str, action: str, user_id: int) -> str:
+    battle = _get_battle(battle_id)
+    if not battle or battle["status"] != "pending_approval":
+        return "There is no pending opponent approval."
+    if str(user_id) != battle["challenger_id"]:
+        return "Only the challenger can approve or change the accepter."
+    with state_connection(STATE_DB) as con:
+        if action == "approve":
+            con.execute("""
+                UPDATE battles SET status='accepted'
+                WHERE battle_id=? AND status='pending_approval'
+            """, (battle_id,))
+            message = "Opponent accepted. Both players can now confirm Start."
+        elif action == "change":
+            con.execute("""
+                INSERT OR IGNORE INTO battle_declined_users(battle_id,user_id,declined_at)
+                VALUES(?,?,?)
+            """, (battle_id, str(battle["opponent_id"]), _now()))
+            con.execute("""
+                UPDATE battles SET opponent_id=NULL,opponent_name=NULL,status='open',
+                    accepted_at=NULL,challenger_ready=0,opponent_ready=0
+                WHERE battle_id=? AND status='pending_approval'
+            """, (battle_id,))
+            message = "Accepter changed. The challenge is open for another player."
+        else:
+            return "Unknown opponent action."
+    updated = _get_battle(battle_id)
+    await _edit_battle(
+        query.get_bot(), updated, _battle_card_text(updated), _battle_keyboard(updated)
+    )
+    return message
+
+
+async def _ready_battle(query, battle_id: str, user_id: int, application: Application) -> str:
     battle = _get_battle(battle_id)
     if not battle or battle["status"] != "accepted":
         return "This battle is not waiting for Start confirmation."
-    if role == "c" and str(user_id) == battle["challenger_id"]:
+    uid = str(user_id)
+    if uid == battle["challenger_id"]:
         column = "challenger_ready"
-    elif role == "o" and str(user_id) == battle["opponent_id"]:
+    elif uid == battle["opponent_id"]:
         column = "opponent_ready"
     else:
-        return "Only the assigned player can confirm their own START."
+        return "Only the two assigned players can confirm Start."
     with state_connection(STATE_DB) as con:
-        con.execute(f"UPDATE battles SET {column}=1 WHERE battle_id=? AND status='accepted'", (battle_id,))
+        con.execute(
+            f"UPDATE battles SET {column}=1 WHERE battle_id=? AND status='accepted'",
+            (battle_id,),
+        )
         current = con.execute("SELECT * FROM battles WHERE battle_id=?", (battle_id,)).fetchone()
         updated = dict(current)
         if updated["challenger_ready"] and updated["opponent_ready"]:
@@ -483,229 +547,77 @@ async def _ready_battle(query, battle_id: str, role: str, user_id: int, applicat
                 (battle_id,),
             )
             updated["status"] = "countdown"
-    if updated["status"] == "countdown":
-        await query.edit_message_text(
-            "✅ <b>BOTH PLAYERS READY</b>\n\n⚔️ Battle starting in 3 seconds…",
-            parse_mode=ParseMode.HTML,
-        )
-        application.create_task(_begin_battle_after_countdown(application, battle_id))
-        return "Both confirmed. Battle starting!"
-    await query.edit_message_text(
-        _battle_card_text(updated), parse_mode=ParseMode.HTML, reply_markup=_battle_keyboard(updated)
+    await _edit_battle(
+        application.bot, updated, _battle_card_text(updated), _battle_keyboard(updated)
     )
-    return "Your START confirmation is saved. Waiting for the other player."
-
+    if updated["status"] == "countdown":
+        application.create_task(_begin_battle_after_countdown(application, battle_id))
+        return "Both players are ready. Battle starting!"
+    return "Ready saved. Waiting for the other player."
 
 async def _begin_battle_after_countdown(application: Application, battle_id: str) -> None:
     await asyncio.sleep(3)
-    with state_connection(STATE_DB) as con:
-        cur = con.execute("""
-            UPDATE battles SET status='active',started_at=?,question_started_at=?
-            WHERE battle_id=? AND status='countdown'
-        """, (_now(), _now(), battle_id))
-    if cur.rowcount != 1:
-        return
-    await _render_battle_question(application.bot, battle_id, application)
-
-
-def _battle_progress(battle_id: str) -> tuple[int, int]:
-    battle = _get_battle(battle_id)
+    battle = begin_battle(STATE_DB, battle_id, BATTLE_DURATION_SECONDS)
     if not battle:
-        return 0, 0
-    with state_connection(STATE_DB) as con:
-        rows = con.execute(
-            "SELECT user_id,COUNT(*) n FROM battle_answers WHERE battle_id=? AND position=? GROUP BY user_id",
-            (battle_id, battle["current_position"]),
-        ).fetchall()
-    return len(rows), len(rows)
-
-
-async def _render_battle_question(bot, battle_id: str, application: Application | None = None) -> None:
+        logger.error("Could not activate battle %s after countdown.", battle_id)
+        return
     battle = _get_battle(battle_id)
-    if not battle:
-        return
-    if battle["status"] == "completed":
-        await _render_battle_result(bot, battle_id)
-        return
-    with state_connection(STATE_DB) as con:
-        item = con.execute(
-            "SELECT question_id FROM battle_questions WHERE battle_id=? AND position=?",
-            (battle_id, battle["current_position"]),
-        ).fetchone()
-        counts = con.execute(
-            "SELECT COUNT(*) FROM battle_answers WHERE battle_id=? AND position=?",
-            (battle_id, battle["current_position"]),
-        ).fetchone()[0]
-    if not item:
-        return
-    row = _question(item["question_id"])
-    if not row:
-        logger.error("Missing battle question %s", item["question_id"])
-        return
-    position = int(battle["current_position"])
-    text = _format_mcq(row, f"⚔️ BATTLE · QUESTION {position + 1}/{battle['total_questions']}")
-    text += (
-        f"\n\n<b>{_esc(battle['challenger_name'])}</b>: "
-        f"{'✅ Answer submitted' if _has_battle_answer(battle_id, battle['challenger_id'], position) else '⏳ Answering'}"
-        f"\n<b>{_esc(battle['opponent_name'])}</b>: "
-        f"{'✅ Answer submitted' if _has_battle_answer(battle_id, battle['opponent_id'], position) else '⏳ Answering'}"
-        "\n\n<i>Answer correctness stays hidden until the match ends.</i>"
+    await _edit_battle(
+        application.bot, battle, _battle_card_text(battle), _battle_keyboard(battle)
     )
-    markup = _battle_answer_keyboard(battle_id, position)
-    await _edit_battle(bot, battle, text, markup)
-    if application and application.job_queue:
-        application.job_queue.run_once(
-                battle_question_timeout,
-                when=BATTLE_QUESTION_SECONDS,
-                data={"battle_id": battle_id, "position": position},
-                name=f"battle-timeout-{battle_id}-{position}",
-            )
 
 
-def _has_battle_answer(battle_id: str, user_id: str, position: int) -> bool:
-    with state_connection(STATE_DB) as con:
-        row = con.execute(
-            "SELECT 1 FROM battle_answers WHERE battle_id=? AND user_id=? AND position=?",
-            (battle_id, user_id, position),
-        ).fetchone()
-    return row is not None
-
-
-def _store_battle_answer(battle_id: str, user_id: str, position: int, option: str) -> tuple[str, dict | None]:
-    battle = _get_battle(battle_id)
-    if not battle or battle["status"] != "active" or int(battle["current_position"]) != position:
-        return "inactive", battle
-    if user_id not in (battle["challenger_id"], battle["opponent_id"]):
-        return "not_player", battle
-    with state_connection(STATE_DB) as con:
-        exists = con.execute(
-            "SELECT 1 FROM battle_answers WHERE battle_id=? AND user_id=? AND position=?",
-            (battle_id, user_id, position),
-        ).fetchone()
-        if exists:
-            return "duplicate", dict(con.execute("SELECT * FROM battles WHERE battle_id=?", (battle_id,)).fetchone())
-        qrow = con.execute(
-            "SELECT question_id FROM battle_questions WHERE battle_id=? AND position=?",
-            (battle_id, position),
-        ).fetchone()
-        if not qrow:
-            return "inactive", battle
-        question_id = qrow["question_id"]
-        row = _question(question_id)
-        if not row:
-            return "inactive", battle
-        correct = str(row.get("correct_option_key") or "").upper()
-        elapsed = max(0, int((_now() - float(battle.get("question_started_at") or _now())) * 1000))
-        con.execute("""
-            INSERT INTO battle_answers(
-                battle_id,user_id,position,selected_option,is_correct,elapsed_ms,answered_at
-            ) VALUES(?,?,?,?,?,?,?)
-        """, (battle_id, user_id, position, option, int(option == correct), elapsed, _now()))
-        answer_count = con.execute(
-            "SELECT COUNT(*) FROM battle_answers WHERE battle_id=? AND position=?",
-            (battle_id, position),
-        ).fetchone()[0]
-        if answer_count < 2:
-            return "waiting", dict(con.execute("SELECT * FROM battles WHERE battle_id=?", (battle_id,)).fetchone())
-        if position + 1 >= int(battle["total_questions"]):
-            con.execute(
-                "UPDATE battles SET status='completed',finished_at=? WHERE battle_id=? AND status='active' AND current_position=?",
-                (_now(), battle_id, position),
-            )
-            return "completed", dict(con.execute("SELECT * FROM battles WHERE battle_id=?", (battle_id,)).fetchone())
-        con.execute("""
-            UPDATE battles SET current_position=?,question_started_at=?
-            WHERE battle_id=? AND status='active' AND current_position=?
-        """, (position + 1, _now(), battle_id, position))
-        return "advance", dict(con.execute("SELECT * FROM battles WHERE battle_id=?", (battle_id,)).fetchone())
+def _format_duration(milliseconds: int) -> str:
+    seconds = max(0, int(milliseconds // 1000))
+    return f"{seconds // 60:02d}:{seconds % 60:02d}"
 
 
 async def _render_battle_result(bot, battle_id: str) -> None:
-    battle = _get_battle(battle_id)
-    if not battle:
+    try:
+        history = get_battle_history(STATE_DB, QUESTION_DB, battle_id)
+    except Exception:
+        logger.exception("Could not build completed battle result %s", battle_id)
         return
+    battle = _get_battle(battle_id)
+    if not battle or battle.get("result_posted_at"):
+        return
+    players = history["players"]
+    if len(players) != 2:
+        return
+    a, b = sorted(players, key=lambda player: 0 if player["role"] == "challenger" else 1)
+    winner_id = history["winner_user_id"]
+    winner = next((player for player in players if player["user_id"] == winner_id), None)
+    heading = f"🏆 <b>Winner: {_esc(winner['name'])}</b>" if winner else "🤝 <b>Match Draw</b>"
+    text = (
+        "🏁 <b>BATTLE COMPLETED</b>\n\n" + heading + "\n\n"
+        + f"<b>{_esc(a['name'])}</b> — <b>{a['points']} pts</b> · {a['correct']}/{a['total_questions']} correct · "
+          f"{a['accuracy']:.1f}% accuracy · {_format_duration(a['total_elapsed_ms'])}\n"
+        + f"<b>{_esc(b['name'])}</b> — <b>{b['points']} pts</b> · {b['correct']}/{b['total_questions']} correct · "
+          f"{b['accuracy']:.1f}% accuracy · {_format_duration(b['total_elapsed_ms'])}\n\n"
+        + "<i>100 points per correct answer. Higher points win; faster total time breaks a tie. "
+          "Battle points affect community ranking only.</i>"
+    )
+    try:
+        await _edit_battle(bot, battle, text, _battle_keyboard(battle))
+    except Exception:
+        logger.exception("Could not publish battle result card %s", battle_id)
+        return
+    with state_connection(STATE_DB) as con:
+        con.execute(
+            "UPDATE battles SET result_posted_at=? WHERE battle_id=? AND result_posted_at IS NULL",
+            (_now(), battle_id),
+        )
+
+
+async def publish_completed_battles_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     with state_connection(STATE_DB) as con:
         rows = con.execute("""
-            SELECT user_id,SUM(is_correct) correct,COUNT(*) answered,SUM(elapsed_ms) elapsed
-            FROM battle_answers WHERE battle_id=? GROUP BY user_id
-        """, (battle_id,)).fetchall()
-    scores = {r["user_id"]: dict(r) for r in rows}
-    a = scores.get(battle["challenger_id"], {"correct": 0, "answered": 0, "elapsed": 0})
-    b = scores.get(battle["opponent_id"], {"correct": 0, "answered": 0, "elapsed": 0})
-    if int(a["correct"]) > int(b["correct"]):
-        winner = battle["challenger_name"]
-        winner_id = battle["challenger_id"]
-    elif int(b["correct"]) > int(a["correct"]):
-        winner = battle["opponent_name"]
-        winner_id = battle["opponent_id"]
-    elif int(a["elapsed"] or 0) < int(b["elapsed"] or 0):
-        winner, winner_id = battle["challenger_name"], battle["challenger_id"]
-    elif int(b["elapsed"] or 0) < int(a["elapsed"] or 0):
-        winner, winner_id = battle["opponent_name"], battle["opponent_id"]
-    else:
-        winner, winner_id = "Draw", None
-    for uid, stat in ((battle["challenger_id"], a), (battle["opponent_id"], b)):
-        with state_connection(STATE_DB) as con:
-            inserted = con.execute(
-                "INSERT OR IGNORE INTO battle_awards(battle_id,user_id) VALUES(?,?)",
-                (battle_id, uid),
-            )
-            if inserted.rowcount == 1:
-                con.execute("""
-                    INSERT INTO battle_player_totals(user_id,battles_played,wins,correct_total,elapsed_total)
-                    VALUES(?,1,?,?,?)
-                    ON CONFLICT(user_id) DO UPDATE SET
-                      battles_played=battles_played+1,wins=wins+excluded.wins,
-                      correct_total=correct_total+excluded.correct_total,
-                      elapsed_total=elapsed_total+excluded.elapsed_total
-                """, (uid, int(winner_id == uid), int(stat["correct"]), int(stat["elapsed"] or 0)))
-    text = (
-        "🏁 <b>BATTLE COMPLETED</b>\n\n"
-        + (f"🏆 <b>Winner: {_esc(winner)}</b>\n\n" if winner_id else "🤝 <b>It's a draw!</b>\n\n")
-        + f"<b>{_esc(battle['challenger_name'])}</b> — {int(a['correct'])}/{battle['total_questions']} correct\n"
-        + f"<b>{_esc(battle['opponent_name'])}</b> — {int(b['correct'])}/{battle['total_questions']} correct\n\n"
-        + "<i>Battle points update community ranking only, never the official channel-event leaderboard.</i>"
-    )
-    markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton("⚔️ Rematch", callback_data=f"rm|{battle['subject_id']}")
-    ]])
-    await _edit_battle(bot, battle, text, markup)
-
-
-async def battle_question_timeout(context: ContextTypes.DEFAULT_TYPE) -> None:
-    data = context.job.data
-    battle_id, position = data["battle_id"], int(data["position"])
-    battle = _get_battle(battle_id)
-    if not battle or battle["status"] != "active" or int(battle["current_position"]) != position:
-        return
-    with state_connection(STATE_DB) as con:
-        for uid in (battle["challenger_id"], battle["opponent_id"]):
-            exists = con.execute(
-                "SELECT 1 FROM battle_answers WHERE battle_id=? AND user_id=? AND position=?",
-                (battle_id, uid, position),
-            ).fetchone()
-            if not exists:
-                con.execute("""
-                    INSERT INTO battle_answers(
-                      battle_id,user_id,position,selected_option,is_correct,elapsed_ms,answered_at
-                    ) VALUES(?,?,?,NULL,0,?,?)
-                """, (battle_id, uid, position, BATTLE_QUESTION_SECONDS * 1000, _now()))
-        if position + 1 >= int(battle["total_questions"]):
-            con.execute(
-                "UPDATE battles SET status='completed',finished_at=? WHERE battle_id=? AND status='active' AND current_position=?",
-                (_now(), battle_id, position),
-            )
-        else:
-            con.execute(
-                "UPDATE battles SET current_position=?,question_started_at=? WHERE battle_id=? AND status='active' AND current_position=?",
-                (position + 1, _now(), battle_id, position),
-            )
-    latest = _get_battle(battle_id)
-    if latest and latest["status"] == "completed":
-        await _render_battle_result(context.bot, battle_id)
-    else:
-        await _render_battle_question(context.bot, battle_id, context.application)
-
+            SELECT battle_id FROM battles
+            WHERE status='completed' AND result_posted_at IS NULL
+            ORDER BY finished_at LIMIT 20
+        """).fetchall()
+    for row in rows:
+        await _render_battle_result(context.bot, row["battle_id"])
 
 async def _cancel_battle(query, battle_id: str, user_id: int) -> str:
     battle = _get_battle(battle_id)
@@ -759,51 +671,18 @@ async def community_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             result = await _accept_battle(query, data[1], update.effective_user, context.application)
             await query.answer(result, show_alert=("already" in result.lower() or "only" in result.lower()))
             return
-        if action == "rd" and len(data) == 3:
-            result = await _ready_battle(query, data[1], data[2], update.effective_user.id, context.application)
+        if action == "ch" and len(data) == 3:
+            result = await _resolve_opponent(query, data[1], data[2], update.effective_user.id)
+            await query.answer(result, show_alert=("only" in result.lower() or "no pending" in result.lower()))
+            return
+        if action == "rd" and len(data) == 2:
+            result = await _ready_battle(query, data[1], update.effective_user.id, context.application)
             await query.answer(result)
             return
-        if action == "ba" and len(data) == 4:
-            result, battle = _store_battle_answer(data[1], str(update.effective_user.id), int(data[2]), data[3])
-            if result == "not_player":
-                await query.answer("Only the two players can answer.", show_alert=True)
-            elif result == "duplicate":
-                await query.answer("Your answer is already recorded.")
-            elif result == "inactive":
-                await query.answer("This question is closed.", show_alert=True)
-            elif result == "waiting":
-                await query.answer("Answer recorded. Waiting for your opponent.")
-                battle = _get_battle(data[1])
-                with state_connection(STATE_DB) as con:
-                    qrow = con.execute(
-                        "SELECT question_id FROM battle_questions WHERE battle_id=? AND position=?",
-                        (data[1], int(data[2])),
-                    ).fetchone()
-                qdata = _question(qrow["question_id"]) if qrow else None
-                text = _format_mcq(
-                    qdata, f"⚔️ BATTLE · QUESTION {int(battle['current_position']) + 1}/{battle['total_questions']}"
-                ) if qdata and battle else "⚔️ Battle answer received."
-                if battle:
-                    text += (
-                        f"\n\n{_esc(battle['challenger_name'])}: "
-                        f"{'✅ Submitted' if _has_battle_answer(data[1], battle['challenger_id'], int(data[2])) else '⏳ Waiting'}"
-                        f"\n{_esc(battle['opponent_name'])}: "
-                        f"{'✅ Submitted' if _has_battle_answer(data[1], battle['opponent_id'], int(data[2])) else '⏳ Waiting'}"
-                        "\n\n<i>Waiting for both answers. Correctness is hidden.</i>"
-                    )
-                await query.edit_message_text(
-                    text, parse_mode=ParseMode.HTML,
-                    reply_markup=_battle_answer_keyboard(data[1], int(data[2])),
-                )
-            elif result == "advance":
-                await query.answer("Both answers recorded. Next question!")
-                await _render_battle_question(context.bot, data[1], context.application)
-            elif result == "completed":
-                await query.answer("Battle completed!")
-                await _render_battle_result(context.bot, data[1])
-            return
         if action == "oc" and len(data) == 4:
-            result = _record_official_answer(data[1], str(update.effective_user.id), int(data[2]), data[3], update.effective_user)
+            result = _record_official_answer(
+                data[1], str(update.effective_user.id), int(data[2]), data[3], update.effective_user
+            )
             await query.answer(result, show_alert=result != "Answer recorded privately.")
             return
         if action == "ca" and len(data) == 2:
@@ -825,7 +704,6 @@ async def community_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await query.answer("Something went wrong. Please try again.", show_alert=True)
         except Exception:
             pass
-
 
 async def ids_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text(
@@ -887,7 +765,7 @@ async def battle_status_command(update: Update, context: ContextTypes.DEFAULT_TY
     with state_connection(STATE_DB) as con:
         row = con.execute("""
             SELECT * FROM battles
-            WHERE (challenger_id=? OR opponent_id=?) AND status IN ('open','accepted','countdown','active')
+            WHERE (challenger_id=? OR opponent_id=?) AND status IN ('open','pending_approval','accepted','countdown','active')
             ORDER BY created_at DESC LIMIT 1
         """, (uid, uid)).fetchone()
     if not row:
@@ -895,8 +773,7 @@ async def battle_status_command(update: Update, context: ContextTypes.DEFAULT_TY
         return
     battle = dict(row)
     await update.effective_message.reply_text(
-        _battle_card_text(battle) if battle["status"] in ("open", "accepted") else
-        f"⚔️ Battle {battle['battle_id']} · {battle['status'].upper()}\nQuestion {battle['current_position'] + 1}/{battle['total_questions']}",
+        _battle_card_text(battle),
         parse_mode=ParseMode.HTML,
     )
 
@@ -1223,12 +1100,21 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.inline_query.answer(results[:20], cache_time=10, is_personal=True)
 
 
-def setup_daily_jobs(application: Application) -> None:
+async def setup_daily_jobs(application: Application) -> None:
+    global BOT_USERNAME
+    try:
+        BOT_USERNAME = (await application.bot.get_me()).username or ""
+    except Exception:
+        logger.exception("Could not resolve bot username for Mini App deep links.")
+    if not application.job_queue:
+        logger.warning("PTB JobQueue is missing; timed community tasks are disabled.")
+        return
+    application.job_queue.run_repeating(
+        publish_completed_battles_job, interval=5, first=5,
+        name="publish-completed-battle-results",
+    )
     if not CHANNEL_ID:
         logger.warning("PUBLIC_CHANNEL_ID is not set; daily channel events are disabled.")
-        return
-    if not application.job_queue:
-        logger.warning("PTB JobQueue is missing; install python-telegram-bot[job-queue].")
         return
     reminder_dt = datetime.now(TZ).replace(
         hour=EVENT_HOUR, minute=EVENT_MINUTE, second=0, microsecond=0
@@ -1242,7 +1128,6 @@ def setup_daily_jobs(application: Application) -> None:
         name="daily-official-event",
     )
     logger.info("Daily official events scheduled for %02d:%02d Asia/Kolkata.", EVENT_HOUR, EVENT_MINUTE)
-
 
 def register_community_handlers(application: Application) -> None:
     initialize_community_db(STATE_DB)
@@ -1259,5 +1144,5 @@ def register_community_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("event_top", event_top_command))
     application.add_handler(InlineQueryHandler(inline_query_handler))
     application.add_handler(CallbackQueryHandler(
-        community_callback, pattern=r"^(cs|ac|rd|ba|oc|ca|ic|rm)\|"
+        community_callback, pattern=r"^(cs|ac|ch|rd|oc|ca|ic|rm)\|"
     ))
