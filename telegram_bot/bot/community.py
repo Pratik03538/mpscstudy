@@ -579,6 +579,19 @@ async def _begin_battle_after_countdown(application: Application, battle_id: str
     await _edit_battle(
         application.bot, battle, _battle_card_text(battle), _battle_keyboard(battle)
     )
+    if application.job_queue:
+        application.job_queue.run_once(
+            battle_deadline_job, when=BATTLE_DURATION_SECONDS,
+            data={"battle_id": battle_id}, name=f"battle-deadline-{battle_id}",
+        )
+
+
+async def battle_deadline_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    battle_id = context.job.data["battle_id"]
+    finalize_battle_if_expired(STATE_DB, battle_id)
+    battle = _get_battle(battle_id)
+    if battle and battle["status"] == "completed" and not battle.get("result_posted_at"):
+        await _render_battle_result(context.bot, battle_id)
 
 
 def _format_duration(milliseconds: int) -> str:
@@ -789,6 +802,7 @@ async def battle_status_command(update: Update, context: ContextTypes.DEFAULT_TY
     await update.effective_message.reply_text(
         _battle_card_text(battle),
         parse_mode=ParseMode.HTML,
+        reply_markup=_battle_keyboard(battle),
     )
 
 
