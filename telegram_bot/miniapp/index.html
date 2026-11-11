@@ -138,9 +138,9 @@
     showBattleMode("battle");
     $("battleTitle").textContent="Battle "+id;
     $("battleMessage").textContent="Connecting to your private match…";
-    await refreshBattleRoom();
     if(battlePoll) clearInterval(battlePoll);
     battlePoll=setInterval(refreshBattleRoom,2500);
+    await refreshBattleRoom();
   }
   function renderBattleRoom(s){
     $("battleSubject").textContent=s.subject+" · "+s.total_questions+" questions · 10 minute limit";
