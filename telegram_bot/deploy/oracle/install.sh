@@ -19,7 +19,7 @@ fi
 
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  git python3 python3-venv python3-pip nginx certbot python3-certbot-nginx
+  git python3 python3-venv python3-pip nginx certbot python3-certbot-nginx ufw
 
 if [[ ! -d "$APP_DIR/.git" ]]; then
   sudo mkdir -p "$APP_DIR"
@@ -47,6 +47,10 @@ else
   sudo chown root:root /etc/mpsc-study.env
   sudo chmod 0600 /etc/mpsc-study.env
 fi
+
+sudo ufw allow OpenSSH
+sudo ufw allow 'Nginx Full'
+sudo ufw --force enable
 
 sudo systemctl daemon-reload
 
