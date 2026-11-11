@@ -43,6 +43,15 @@ def initialize_battle_schema(path: Path) -> None:
             PRIMARY KEY(battle_id,user_id)
         );
         """)
+        # Existing shared-message battles have no independent player rows and cannot
+        # safely continue under the new per-player Mini App state machine.
+        con.execute("""
+            UPDATE battles SET status='aborted',finished_at=COALESCE(finished_at,?)
+            WHERE status IN ('accepted','countdown','active')
+              AND NOT EXISTS (
+                SELECT 1 FROM battle_players bp WHERE bp.battle_id=battles.battle_id
+              )
+        """, (time.time(),))
 
 
 def _get_question(question_db: Path, question_id: str) -> dict | None:
