@@ -176,6 +176,7 @@ def community_leaderboard(limit: int = 20, x_telegram_init_data: str = Header(de
                 "battles": int(row["battles_played"]),
                 "wins": int(row["wins"]),
                 "correct": int(row["correct_total"]),
+                "points": int(row["correct_total"]) * 100,
             } for row in rows
         ]}
     finally:
