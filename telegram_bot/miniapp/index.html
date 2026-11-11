@@ -10,6 +10,22 @@
     :root{color-scheme:dark;--bg:#0b1220;--panel:#121e31;--panel2:#17263c;--text:#f4f7fb;--muted:#9aabc1;--line:#263850;--blue:#6aa9ff;--cyan:#56d6c2;--gold:#f5c56b;--red:#ff8585}
     *{box-sizing:border-box}body{margin:0;background:radial-gradient(900px 500px at 15% -10%,#1c3b62 0%,transparent 60%),radial-gradient(700px 400px at 110% 20%,#163d40 0%,transparent 55%),var(--bg);color:var(--text);font:15px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
     .wrap{max-width:780px;margin:auto;padding:18px 16px 42px}.top{display:flex;justify-content:space-between;align-items:center;margin:8px 0 24px}.brand{display:flex;gap:11px;align-items:center;font-weight:800;letter-spacing:.02em}.mark{width:42px;height:42px;border-radius:14px;background:linear-gradient(135deg,#3978d9,#49c6b6);display:grid;place-items:center;font-size:21px;box-shadow:0 10px 35px #1d72b644}.eyebrow{color:var(--cyan);font-size:11px;font-weight:800;letter-spacing:.16em}.hero{padding:22px;border:1px solid #38516c;border-radius:24px;background:linear-gradient(120deg,#1a3554e8,#142b3be8);box-shadow:0 20px 60px #0003}.hero h1{font-size:28px;line-height:1.12;margin:8px 0}.hero p{color:#c0d0e1;margin:8px 0 0}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:15px 0}.card{background:linear-gradient(160deg,var(--panel),#0f1a2b);border:1px solid var(--line);border-radius:18px;padding:16px;min-width:0}.metric{font-size:27px;font-weight:850;letter-spacing:-.04em;margin:7px 0 0}.muted{color:var(--muted);font-size:12px}.section{display:flex;align-items:center;justify-content:space-between;margin:25px 2px 10px}.section h2{font-size:16px;margin:0}.subject{margin:12px 0}.subject-head{display:flex;justify-content:space-between;font-size:13px;margin-bottom:7px}.bar{height:8px;border-radius:99px;background:#26374c;overflow:hidden}.bar span{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--blue),var(--cyan))}.tabs{display:flex;gap:8px;margin:18px 0 6px}.tab{border:1px solid var(--line);color:var(--muted);background:#101c2c;border-radius:99px;padding:9px 14px;font-weight:700}.tab.active{background:#214875;color:#fff;border-color:#3978b7}.row{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid #24354a}.row:last-child{border:0}.rank{font-weight:850;color:var(--gold);width:25px}.name{font-weight:700;overflow-wrap:anywhere}.pill{display:inline-flex;align-items:center;padding:4px 9px;border-radius:99px;background:#173c40;color:#80edce;font-size:11px;font-weight:800}.empty{color:var(--muted);padding:15px 0}.notice{background:#302817;border:1px solid #65502e;color:#ffdfa1;padding:12px 14px;border-radius:13px;margin:14px 0;font-size:13px}.foot{margin-top:28px;color:#73869e;text-align:center;font-size:11px}.hidden{display:none!important}.loading{color:var(--muted);padding:16px 0}
+    .battle-panel{margin:16px 0;padding:18px;border:1px solid #3b5c7d;border-radius:20px;background:linear-gradient(150deg,#172b43,#111c2e)}
+    .battle-head{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
+    .battle-clock{font-size:24px;font-weight:900;color:var(--gold);font-variant-numeric:tabular-nums}
+    .battle-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0}
+    .battle-stat{padding:12px;border-radius:13px;background:#0c1727;border:1px solid var(--line)}
+    .battle-stat b{display:block;font-size:20px;margin-top:4px}
+    .battle-question{font-size:17px;white-space:pre-wrap;margin:16px 0}
+    .battle-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+    .battle-option{border:1px solid #436181;background:#1b3551;color:#fff;padding:13px;border-radius:12px;text-align:left;font-weight:750;min-height:54px}
+    .battle-option:disabled{opacity:.5}
+    .battle-note{color:#b9cbe0;font-size:13px;margin:12px 0}
+    .history-item{padding:14px 0;border-bottom:1px solid var(--line)}
+    .history-item:last-child{border:0}
+    .history-answer{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;font-size:12px}
+    .history-answer>div{padding:9px;border-radius:10px;background:#0d192a}
+    .history-good{color:var(--cyan)}.history-bad{color:var(--red)}
     @media(min-width:620px){.grid{grid-template-columns:repeat(4,minmax(0,1fr))}.hero h1{font-size:34px}.wrap{padding-top:28px}}
   </style>
 </head>
@@ -25,6 +41,23 @@
     <p>Your practice, battles and official event performance in one place.</p>
   </section>
   <div id="notice" class="notice hidden"></div>
+  <section id="battleRoom" class="battle-panel hidden">
+    <div class="battle-head"><div><div class="eyebrow">LIVE MATCH</div><h2 id="battleTitle">Battle Room</h2><div class="muted" id="battleSubject"></div></div><div><div class="muted">TIME LEFT</div><div class="battle-clock" id="battleClock">10:00</div></div></div>
+    <div class="battle-stats">
+      <div class="battle-stat"><span class="muted">YOUR PROGRESS</span><b id="myProgress">0/10</b><span class="muted" id="myLiveScore">0 pts · 0% accuracy</span></div>
+      <div class="battle-stat"><span class="muted">OPPONENT PROGRESS</span><b id="opponentProgress">0/10</b><span class="muted" id="opponentState">Playing</span></div>
+    </div>
+    <div id="battleQuestionArea">
+      <div class="battle-question" id="battleQuestion"></div>
+      <div class="battle-options" id="battleOptions"></div>
+    </div>
+    <div class="battle-note" id="battleMessage">Each player answers independently. You never wait for the other player's submission.</div>
+  </section>
+  <section id="historyRoom" class="battle-panel hidden">
+    <div class="eyebrow">MATCH AUDIT</div><h2 id="historyTitle">Full Match History</h2>
+    <div id="historySummary"></div>
+    <div id="historyQuestions"></div>
+  </section>
   <section class="grid">
     <div class="card"><div class="muted">PRACTICE QUESTIONS</div><div class="metric" id="answered">—</div><div class="muted">Attempted</div></div>
     <div class="card"><div class="muted">ACCURACY</div><div class="metric" id="accuracy">—</div><div class="muted">Practice answers</div></div>
@@ -75,6 +108,122 @@
   }
   function escapeHtml(value){return String(value).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
   async function get(path){const res=await fetch(path,{headers});if(!res.ok)throw new Error(res.status===401?"Open this Mini App from the Telegram bot to verify your account.":"Could not load dashboard data.");return res.json();}
+  let activeBattleId = "";
+  let battlePoll = null;
+  let battleClock = null;
+  let battleDeadlineMs = 0;
+  let battleBusy = false;
+  function showBattleMode(section){
+    document.querySelectorAll(".grid,.tabs,.panel").forEach(el=>el.classList.add("hidden"));
+    $("battleRoom").classList.toggle("hidden",section!=="battle");
+    $("historyRoom").classList.toggle("hidden",section!=="history");
+  }
+  function timeLabel(ms){
+    const total=Math.max(0,Math.floor(Number(ms||0)/1000));
+    return String(Math.floor(total/60)).padStart(2,"0")+":"+String(total%60).padStart(2,"0");
+  }
+  function startBattleClock(){
+    if(battleClock) clearInterval(battleClock);
+    battleClock=setInterval(()=>{
+      const left=Math.max(0,Math.ceil((battleDeadlineMs-Date.now())/1000));
+      $("battleClock").textContent=timeLabel(left*1000);
+    },250);
+  }
+  async function openBattleRoom(id){
+    activeBattleId=id;
+    showBattleMode("battle");
+    $("battleTitle").textContent="Battle "+id;
+    $("battleMessage").textContent="Connecting to your private match…";
+    await refreshBattleRoom();
+    if(battlePoll) clearInterval(battlePoll);
+    battlePoll=setInterval(refreshBattleRoom,2500);
+  }
+  function renderBattleRoom(s){
+    $("battleSubject").textContent=s.subject+" · "+s.total_questions+" questions · 10 minute limit";
+    $("myProgress").textContent=s.me.answered+"/"+s.total_questions;
+    $("myLiveScore").textContent=s.me.points+" pts · "+s.me.accuracy+"% accuracy";
+    $("opponentProgress").textContent=(s.opponent?.answered||0)+"/"+s.total_questions;
+    $("opponentState").textContent=s.opponent?.status==="completed"?"Attempt submitted":s.opponent?.status==="timed_out"?"Time ended":"Playing";
+    battleDeadlineMs=Date.now()+Math.max(0,s.remaining_seconds)*1000;
+    $("battleClock").textContent=timeLabel(s.remaining_seconds*1000);
+    if(s.status==="completed"){
+      $("battleQuestionArea").classList.add("hidden");
+      $("battleMessage").textContent="Match completed. Loading both scores and question-by-question history…";
+      if(battlePoll){clearInterval(battlePoll);battlePoll=null;}
+      openBattleHistory(activeBattleId);
+      return;
+    }
+    if(s.me.status!=="active"){
+      $("battleQuestionArea").classList.add("hidden");
+      $("battleMessage").textContent="Your "+s.me.answered+" answers are saved. The opponent continues independently; the match closes when both finish or the 10-minute timer ends.";
+      return;
+    }
+    $("battleQuestionArea").classList.remove("hidden");
+    if(!s.question){
+      $("battleQuestion").textContent="Preparing your next question…";
+      $("battleOptions").innerHTML="";
+      return;
+    }
+    const q=s.question;
+    $("battleQuestion").textContent=(q.question_mr||q.question_en||"")+(q.question_en&&q.question_en!==q.question_mr?"\n\n"+q.question_en:"");
+    $("battleOptions").innerHTML=["A","B","C","D"].map(k=>'<button class="battle-option" data-option="'+k+'"><b>'+k+'.</b> '+escapeHtml(q["option_"+k.toLowerCase()]||"")+'</button>').join("");
+    $("battleOptions").querySelectorAll("[data-option]").forEach(btn=>btn.addEventListener("click",()=>submitBattleChoice(Number(q.position),btn.dataset.option)));
+    $("battleMessage").textContent="Question "+(q.position+1)+"/"+s.total_questions+" · Choose one answer; your next question opens immediately.";
+    startBattleClock();
+  }
+  async function refreshBattleRoom(){
+    if(!activeBattleId||battleBusy)return;
+    try{
+      const s=await get("/api/battles/"+encodeURIComponent(activeBattleId)+"/room");
+      renderBattleRoom(s);
+    }catch(e){
+      $("battleMessage").textContent=e.message;
+    }
+  }
+  async function submitBattleChoice(position,option){
+    if(battleBusy)return;
+    battleBusy=true;
+    $("battleOptions").querySelectorAll("button").forEach(btn=>btn.disabled=true);
+    $("battleMessage").textContent="Submitting answer…";
+    try{
+      const response=await fetch("/api/battles/"+encodeURIComponent(activeBattleId)+"/answer",{
+        method:"POST",headers:{...headers,"Content-Type":"application/json"},
+        body:JSON.stringify({position,option})
+      });
+      const result=await response.json();
+      if(!response.ok)throw new Error(result.detail||"Answer could not be submitted.");
+      renderBattleRoom(result);
+    }catch(e){
+      $("battleMessage").textContent=e.message;
+      await refreshBattleRoom();
+    }finally{battleBusy=false;}
+  }
+  async function openBattleHistory(id){
+    showBattleMode("history");
+    $("historyTitle").textContent="Match "+id+" · Full History";
+    $("historySummary").innerHTML='<div class="loading">Loading match scores…</div>';
+    $("historyQuestions").innerHTML="";
+    try{
+      const h=await get("/api/battles/"+encodeURIComponent(id)+"/history");
+      const winner=h.players.find(p=>p.user_id===h.winner_user_id);
+      $("historySummary").innerHTML=
+        '<div class="battle-stats">'+h.players.map(p=>'<div class="battle-stat"><span class="muted">'+escapeHtml(p.name)+'</span><b>'+p.points+' pts</b><span class="muted">'+p.correct+'/'+p.total_questions+' correct · '+p.accuracy+'% · '+timeLabel(p.total_elapsed_ms)+'</span></div>').join("")+'</div>'+
+        '<div class="battle-note">'+(winner?"Winner: "+escapeHtml(winner.name):"Match draw")+' · 100 points per correct answer · Time breaks a points tie.</div>';
+      $("historyQuestions").innerHTML=h.questions.map(q=>{
+        const answers=h.players.map(p=>{
+          const x=q.answers[p.user_id]||{};
+          const label=x.selected_option?x.selected_option+" — "+(q.options[x.selected_option]||""):"Not answered";
+          return '<div><b>'+escapeHtml(p.name)+'</b><br><span class="'+(x.is_correct?"history-good":"history-bad")+'">'+escapeHtml(label)+(x.is_correct?" · Correct":x.selected_option?" · Incorrect":"")+'</span><br><span class="muted">Time '+timeLabel(x.elapsed_ms)+' · Score then '+(x.score_after||0)+' pts</span></div>';
+        }).join("");
+        return '<article class="history-item"><b>Q'+(q.position+1)+'.</b> '+escapeHtml(q.question)+'<div class="history-answer">'+answers+'</div><div class="muted" style="margin-top:7px">Correct answer: '+escapeHtml(q.correct_option||"—")+' · '+escapeHtml(q.options[q.correct_option]||"")+'</div></article>';
+      }).join("");
+    }catch(e){$("historySummary").textContent=e.message;}
+  }
+  function getStartParam(){
+    const fromTelegram=tg?.initDataUnsafe?.start_param||"";
+    const params=new URLSearchParams(location.search);
+    return fromTelegram||params.get("startapp")||params.get("start_param")||"";
+  }
   async function load(){
     if(!initData){$("connection").textContent="NOT IN TELEGRAM";notice("Open this dashboard using the Telegram bot's Mini App button. Profile data is not loaded in a normal browser.");return;}
     try{
@@ -100,7 +249,10 @@
     document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x===btn));
     document.querySelectorAll(".panel").forEach(x=>x.classList.toggle("hidden",x.id!==btn.dataset.tab));
   }));
-  load();
+  const startParam=getStartParam();
+  if(startParam.startsWith("battle_")) openBattleRoom(startParam.slice(7));
+  else if(startParam.startsWith("history_")) openBattleHistory(startParam.slice(8));
+  else load();
 })();
 </script>
 </body>
