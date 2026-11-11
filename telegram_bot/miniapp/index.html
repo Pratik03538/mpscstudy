@@ -21,6 +21,7 @@
     .battle-option{border:1px solid #436181;background:#1b3551;color:#fff;padding:13px;border-radius:12px;text-align:left;font-weight:750;min-height:54px}
     .battle-option:disabled{opacity:.5}
     .battle-note{color:#b9cbe0;font-size:13px;margin:12px 0}
+    .history-open{border:1px solid #436181;background:#183653;color:#d9eaff;border-radius:9px;padding:7px 10px;font-weight:700;white-space:nowrap}
     .history-item{padding:14px 0;border-bottom:1px solid var(--line)}
     .history-item:last-child{border:0}
     .history-answer{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;font-size:12px}
@@ -102,8 +103,11 @@
     if(!items?.length) return '<div class="empty">No verified results yet. Be the first to compete.</div>';
     return items.map((x,i)=>{
       const detail = kind==="official" ? `${x.correct}/${x.answered} · ${x.points} pts` :
-        kind==="community" ? `${x.wins} wins · ${x.battles} battles` : `${x.status} · ${x.subject}`;
-      return `<div class="row"><span class="rank">${i+1}</span><span class="name" style="flex:1">${escapeHtml(x.name || x.opponent || "")}</span><span class="muted">${escapeHtml(detail)}</span></div>`;
+        kind==="community" ? `${x.wins} wins · ${x.battles} battles` :
+        `${x.status} · ${x.subject} · ${x.points} pts`;
+      const action = kind==="battles" && x.status==="completed"
+        ? '<button class="history-open" data-history="'+escapeHtml(x.id)+'">Full history</button>' : "";
+      return `<div class="row"><span class="rank">${i+1}</span><span class="name" style="flex:1">${escapeHtml(x.name || x.opponent || "")} </span><span class="muted">${escapeHtml(detail)}</span>${action}</div>`;
     }).join("");
   }
   function escapeHtml(value){return String(value).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
@@ -243,6 +247,7 @@
       $("officialList").innerHTML=official.event?rankRows(official.items,"official"):`<div class="empty">No completed official event yet.</div>`;
       $("communityList").innerHTML=rankRows(community.items,"community");
       $("battleList").innerHTML=rankRows(battles.items,"battles");
+      $("battleList").querySelectorAll("[data-history]").forEach(btn=>btn.addEventListener("click",()=>openBattleHistory(btn.dataset.history)));
     }catch(e){$("connection").textContent="OFFLINE";notice(e.message);}
   }
   document.querySelectorAll(".tab").forEach(btn=>btn.addEventListener("click",()=>{
