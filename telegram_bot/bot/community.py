@@ -402,22 +402,27 @@ async def expire_open_battle(context: ContextTypes.DEFAULT_TYPE) -> None:
 async def expire_unstarted_battle(context: ContextTypes.DEFAULT_TYPE) -> None:
     battle_id = context.job.data["battle_id"]
     battle = _get_battle(battle_id)
-    if not battle or battle["status"] != "accepted":
+    if not battle or battle["status"] not in ("pending_approval", "accepted"):
         return
-    with state_connection(STATE_DB) as con:
-        con.execute(
-            "UPDATE battles SET status='expired',finished_at=? WHERE battle_id=? AND status='accepted'",
-            (_now(), battle_id),
-        )
+    if battle["status"] == "pending_approval":
+        with state_connection(STATE_DB) as con:
+            con.execute("""
+                UPDATE battles SET status='open',opponent_id=NULL,opponent_name=NULL,accepted_at=NULL
+                WHERE battle_id=? AND status='pending_approval'
+            """, (battle_id,))
+        message = "⌛ <b>APPROVAL TIMED OUT</b>\nThe challenge is open for another opponent."
+    else:
+        with state_connection(STATE_DB) as con:
+            con.execute(
+                "UPDATE battles SET status='expired',finished_at=? WHERE battle_id=? AND status='accepted'",
+                (_now(), battle_id),
+            )
+        message = "⌛ <b>BATTLE NOT STARTED</b>\nBoth players did not confirm Start in time."
     battle = _get_battle(battle_id)
     try:
-        await _edit_battle(
-            context.bot, battle,
-            "⌛ <b>BATTLE NOT STARTED</b>\nBoth players did not confirm START in time. Create a new public challenge.",
-        )
+        await _edit_battle(context.bot, battle, message, _battle_keyboard(battle))
     except Exception:
-        logger.exception("Could not update unstarted battle card %s", battle_id)
-
+        logger.exception("Could not update unstarted challenge card %s", battle_id)
 
 async def _post_open_battle(update: Update, subject: dict, application: Application | None = None) -> None:
     battle = _create_battle_record(str(update.effective_chat.id), None, update.effective_user, subject)
@@ -487,10 +492,15 @@ async def _accept_battle(query, battle_id: str, user, application: Application) 
     await _edit_battle(
         application.bot, battle, _battle_card_text(battle), _battle_keyboard(battle)
     )
+    if application.job_queue:
+        application.job_queue.run_once(
+            expire_unstarted_battle, when=START_CONFIRM_TTL,
+            data={"battle_id": battle_id}, name=f"battle-approval-expiry-{battle_id}",
+        )
     return "Your acceptance was sent to the challenger for approval."
 
 
-async def _resolve_opponent(query, battle_id: str, action: str, user_id: int) -> str:
+async def _resolve_opponent(query, battle_id: str, action: str, user_id: int, application: Application) -> str:
     battle = _get_battle(battle_id)
     if not battle or battle["status"] != "pending_approval":
         return "There is no pending opponent approval."
@@ -499,9 +509,9 @@ async def _resolve_opponent(query, battle_id: str, action: str, user_id: int) ->
     with state_connection(STATE_DB) as con:
         if action == "approve":
             con.execute("""
-                UPDATE battles SET status='accepted'
+                UPDATE battles SET status='accepted',accepted_at=?
                 WHERE battle_id=? AND status='pending_approval'
-            """, (battle_id,))
+            """, (_now(), battle_id))
             message = "Opponent accepted. Both players can now confirm Start."
         elif action == "change":
             con.execute("""
@@ -518,10 +528,14 @@ async def _resolve_opponent(query, battle_id: str, action: str, user_id: int) ->
             return "Unknown opponent action."
     updated = _get_battle(battle_id)
     await _edit_battle(
-        query.get_bot(), updated, _battle_card_text(updated), _battle_keyboard(updated)
+        application.bot, updated, _battle_card_text(updated), _battle_keyboard(updated)
     )
+    if action == "approve" and application.job_queue:
+        application.job_queue.run_once(
+            expire_unstarted_battle, when=START_CONFIRM_TTL,
+            data={"battle_id": battle_id}, name=f"battle-start-expiry-{battle_id}",
+        )
     return message
-
 
 async def _ready_battle(query, battle_id: str, user_id: int, application: Application) -> str:
     battle = _get_battle(battle_id)
@@ -672,7 +686,7 @@ async def community_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await query.answer(result, show_alert=("already" in result.lower() or "only" in result.lower()))
             return
         if action == "ch" and len(data) == 3:
-            result = await _resolve_opponent(query, data[1], data[2], update.effective_user.id)
+            result = await _resolve_opponent(query, data[1], data[2], update.effective_user.id, context.application)
             await query.answer(result, show_alert=("only" in result.lower() or "no pending" in result.lower()))
             return
         if action == "rd" and len(data) == 2:
