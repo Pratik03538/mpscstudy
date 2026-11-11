@@ -125,7 +125,7 @@ class IndependentBattleTests(unittest.TestCase):
         self.assertEqual(q1["answers"]["202"]["selected_option"], "B")
         self.assertFalse(q1["answers"]["202"]["is_correct"])
 
-        with sqlite3.connect(self.state_db) as con:
+        with closing(sqlite3.connect(self.state_db)) as con, con:
             alice_totals = con.execute(
                 "SELECT battles_played,wins,correct_total FROM battle_player_totals WHERE user_id='101'"
             ).fetchone()
@@ -136,7 +136,7 @@ class IndependentBattleTests(unittest.TestCase):
         self.assertEqual(bob_totals, (1, 0, 0))
 
     def test_ten_minute_deadline_finishes_inactive_players(self):
-        with sqlite3.connect(self.state_db) as con:
+        with closing(sqlite3.connect(self.state_db)) as con, con:
             con.execute(
                 "UPDATE battles SET deadline_at=? WHERE battle_id=?",
                 (time.time() - 2, self.battle_id),
