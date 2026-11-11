@@ -5,20 +5,33 @@ import hmac
 import json
 import os
 import sqlite3
+import sys
 import time
 from pathlib import Path
 from urllib.parse import parse_qsl
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Body, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = ROOT.parent
+BOT_DIR = PROJECT_ROOT / "bot"
+sys.path.insert(0, str(BOT_DIR))
+from battle_engine import get_battle_history, get_battle_room, submit_battle_answer
+
 load_dotenv(PROJECT_ROOT / ".env")
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-STATE_DB = Path(os.getenv("BOT_STATE_DB_PATH", str(PROJECT_ROOT / "data" / "bot_progress.sqlite3"))).resolve()
+
+
+def project_path(setting: str, default: Path) -> Path:
+    raw = Path(os.getenv(setting, str(default)))
+    return (raw if raw.is_absolute() else PROJECT_ROOT / raw).resolve()
+
+
+STATE_DB = project_path("BOT_STATE_DB_PATH", PROJECT_ROOT / "data" / "bot_progress.sqlite3")
+QUESTION_DB = project_path("BOT_DB_PATH", PROJECT_ROOT / "database" / "mpsc_subject_only.db")
 MAX_AUTH_AGE = int(os.getenv("MINI_APP_AUTH_MAX_AGE", "86400"))
 
 app = FastAPI(title="MPSC Arena API", version="1.0.0")
@@ -213,24 +226,80 @@ def recent_battles(x_telegram_init_data: str = Header(default="", alias="X-Teleg
     con = db()
     try:
         rows = con.execute("""
-            SELECT battle_id,challenger_name,opponent_name,subject_name,status,total_questions,
-                   challenger_id,opponent_id,created_at,finished_at
-            FROM battles
-            WHERE challenger_id=? OR opponent_id=?
-            ORDER BY created_at DESC LIMIT 10
-        """, (uid, uid)).fetchall()
+            SELECT b.battle_id,b.challenger_name,b.opponent_name,b.subject_name,b.status,
+                   b.total_questions,b.challenger_id,b.opponent_id,b.created_at,b.finished_at,
+                   p.points,p.correct_count,p.total_elapsed_ms,p.status player_status
+            FROM battles b
+            LEFT JOIN battle_players p ON p.battle_id=b.battle_id AND p.user_id=?
+            WHERE b.challenger_id=? OR b.opponent_id=?
+            ORDER BY b.created_at DESC LIMIT 20
+        """, (uid, uid, uid)).fetchall()
         return {"items": [
             {
                 "id": row["battle_id"],
                 "opponent": row["opponent_name"] if row["challenger_id"] == uid else row["challenger_name"],
                 "subject": row["subject_name"],
                 "status": row["status"],
-                "questions": int(row["total_questions"]),
+                "questions": min(10, int(row["total_questions"])),
                 "finished_at": row["finished_at"],
+                "points": int(row["points"] or 0),
+                "correct": int(row["correct_count"] or 0),
+                "player_status": row["player_status"],
             } for row in rows
         ]}
     finally:
         con.close()
+
+
+@app.get("/api/battles/{battle_id}/room")
+def battle_room(
+    battle_id: str,
+    x_telegram_init_data: str = Header(default="", alias="X-Telegram-Init-Data"),
+):
+    user = current_user(x_telegram_init_data)
+    try:
+        return get_battle_room(STATE_DB, QUESTION_DB, battle_id, str(user["id"]))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@app.post("/api/battles/{battle_id}/answer")
+def battle_answer(
+    battle_id: str,
+    payload: dict = Body(...),
+    x_telegram_init_data: str = Header(default="", alias="X-Telegram-Init-Data"),
+):
+    user = current_user(x_telegram_init_data)
+    try:
+        position = int(payload.get("position"))
+        option = str(payload.get("option", "")).upper()
+        return submit_battle_answer(
+            STATE_DB, QUESTION_DB, battle_id, str(user["id"]), position, option
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@app.get("/api/battles/{battle_id}/history")
+def battle_history(
+    battle_id: str,
+    x_telegram_init_data: str = Header(default="", alias="X-Telegram-Init-Data"),
+):
+    current_user(x_telegram_init_data)
+    try:
+        return get_battle_history(STATE_DB, QUESTION_DB, battle_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 if __name__ == "__main__":
