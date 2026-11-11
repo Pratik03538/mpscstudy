@@ -366,7 +366,7 @@ async def post_init(application: Application) -> None:
         BotCommand("event_stop", "Admin: stop current event"),
         BotCommand("help", "How to use this bot"),
     ])
-    setup_daily_jobs(application)
+    await setup_daily_jobs(application)
 
 
 def main() -> None:
