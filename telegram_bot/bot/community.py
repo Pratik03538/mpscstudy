@@ -271,8 +271,7 @@ def _battle_keyboard(battle: dict) -> InlineKeyboardMarkup | None:
     battle_id = battle["battle_id"]
     if battle["status"] == "open":
         return InlineKeyboardMarkup([
-            [InlineKeyboardButton("⚔️ Accept Challenge", callback_data=f"ac|{battle_id}")],
-            [InlineKeyboardButton("Cancel", callback_data=f"ca|{battle_id}")],
+            [InlineKeyboardButton("⚔️ Accept Challenge", callback_data=f"ac|{battle_id}")]
         ])
     if battle["status"] == "pending_approval":
         return InlineKeyboardMarkup([[
@@ -509,15 +508,38 @@ async def _accept_battle(query, battle_id: str, user, application: Application) 
         return "Challenge already has an accepter or is no longer open."
     _upsert_profile(user)
     battle = _get_battle(battle_id)
-    await _edit_battle(
-        application.bot, battle, _battle_card_text(battle), _battle_keyboard(battle)
+    approval_markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Accept player", callback_data=f"ch|{battle_id}|approve"),
+        InlineKeyboardButton("↩️ Change player", callback_data=f"ch|{battle_id}|change"),
+    ]])
+    approval_text = (
+        f"⚔️ <b>{_esc(battle['opponent_name'])}</b> wants to accept your "
+        f"{_esc(battle['subject_name'])} challenge.\n\n"
+        "Accept this player or change the accepter."
     )
+    try:
+        await application.bot.send_message(
+            chat_id=int(battle["challenger_id"]), text=approval_text,
+            parse_mode=ParseMode.HTML, reply_markup=approval_markup,
+        )
+        # Keep the public challenge card informational; approval controls stay in the sender's private chat.
+        await _edit_battle(
+            application.bot, battle, _battle_card_text(battle), None
+        )
+    except Exception:
+        logger.info(
+            "Could not DM challenger %s; using protected group approval controls.",
+            battle["challenger_id"],
+        )
+        await _edit_battle(
+            application.bot, battle, _battle_card_text(battle), _battle_keyboard(battle)
+        )
     if application.job_queue:
         application.job_queue.run_once(
             expire_pending_approval, when=START_CONFIRM_TTL,
             data={"battle_id": battle_id}, name=f"battle-approval-expiry-{battle_id}",
         )
-    return "Your acceptance was sent to the challenger for approval."
+    return "Acceptance sent to the challenger for approval."
 
 
 async def _resolve_opponent(query, battle_id: str, action: str, user_id: int, application: Application) -> str:
@@ -550,6 +572,15 @@ async def _resolve_opponent(query, battle_id: str, action: str, user_id: int, ap
     await _edit_battle(
         application.bot, updated, _battle_card_text(updated), _battle_keyboard(updated)
     )
+    if query.message and query.message.chat.type == ChatType.PRIVATE:
+        try:
+            await query.edit_message_text(
+                "✅ Player accepted. The public challenge is updated; both players can now confirm Start."
+                if action == "approve" else
+                "↩️ Accepter changed. Your challenge is open for another player.",
+            )
+        except Exception:
+            logger.debug("Could not update private opponent approval message.", exc_info=True)
     if action == "approve" and application.job_queue:
         application.job_queue.run_once(
             expire_unstarted_battle, when=START_CONFIRM_TTL,
