@@ -33,7 +33,7 @@ In the VCN security list or the instance's Network Security Group, add these **s
 | `0.0.0.0/0` | TCP | 80 | Let's Encrypt validation / HTTP redirect |
 | `0.0.0.0/0` | TCP | 443 | HTTPS Mini App |
 
-Do **not** expose port 8000 publicly; Uvicorn listens only on `127.0.0.1` and Nginx proxies HTTPS traffic to it. If your home IP changes, update the SSH ingress rule.
+Do **not** expose port 8000 publicly; Uvicorn listens only on `127.0.0.1` and Nginx proxies HTTPS traffic to it. If your home IP changes, update the SSH ingress rule. The install script also configures Ubuntu UFW to allow SSH and Nginx's HTTP/HTTPS ports.
 
 ## 3. Connect from Windows PowerShell
 
