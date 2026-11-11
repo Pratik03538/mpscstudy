@@ -1,0 +1,20 @@
+[Unit]
+Description=MPSC Arena Mini App API
+Wants=network-online.target mpsc-bot.service
+After=network-online.target mpsc-bot.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/mpscstudy/telegram_bot/miniapp
+EnvironmentFile=/etc/mpsc-study.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/mpscstudy/.venv/bin/uvicorn server:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target
