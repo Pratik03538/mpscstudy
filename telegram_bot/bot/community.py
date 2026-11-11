@@ -420,6 +420,7 @@ async def expire_pending_approval(context: ContextTypes.DEFAULT_TYPE) -> None:
             "⌛ <b>APPROVAL TIMED OUT</b>\nThe challenge is open for another opponent.",
             _battle_keyboard(updated),
         )
+        _schedule_challenge_expiry(context.application, battle_id)
     except Exception:
         logger.exception("Could not reopen challenge after approval timeout %s", battle_id)
 
@@ -554,6 +555,8 @@ async def _resolve_opponent(query, battle_id: str, action: str, user_id: int, ap
             expire_unstarted_battle, when=START_CONFIRM_TTL,
             data={"battle_id": battle_id}, name=f"battle-start-expiry-{battle_id}",
         )
+    elif action == "change":
+        _schedule_challenge_expiry(application, battle_id)
     return message
 
 async def _ready_battle(query, battle_id: str, user_id: int, application: Application) -> str:
