@@ -1,0 +1,20 @@
+[Unit]
+Description=MPSC Study Telegram Bot
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/mpscstudy/telegram_bot
+EnvironmentFile=/etc/mpsc-study.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/mpscstudy/.venv/bin/python /opt/mpscstudy/telegram_bot/bot/bot.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target
