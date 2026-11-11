@@ -78,12 +78,14 @@ def _award_and_close_if_ready(con, battle_id: str, finished_at: float) -> bool:
         WHERE battle_id=? AND status IN ('active','completed')
     """, (finished_at, battle_id))
     # The unique award row makes this safe under duplicate callbacks and retries.
+    new_awards = 0
     for player in players:
         inserted = con.execute(
             "INSERT OR IGNORE INTO battle_awards(battle_id,user_id) VALUES(?,?)",
             (battle_id, player["user_id"]),
         )
         if inserted.rowcount == 1:
+            new_awards += 1
             con.execute("""
                 INSERT INTO battle_player_totals(user_id,battles_played,wins,correct_total,elapsed_total)
                 VALUES(?,1,?,?,?)
@@ -97,7 +99,7 @@ def _award_and_close_if_ready(con, battle_id: str, finished_at: float) -> bool:
                 int(player["total_elapsed_ms"]),
             ))
     current = _players(con, battle_id)
-    if len(current) == 2:
+    if new_awards and len(current) == 2:
         winner = _winner(current)
         if winner:
             con.execute(
