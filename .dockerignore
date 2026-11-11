@@ -1,0 +1,15 @@
+.git
+.github
+.venv
+venv
+__pycache__
+**/__pycache__
+**/*.pyc
+.env
+**/.env
+*.db
+*.sqlite
+*.sqlite3
+telegram_bot/data
+telegram_bot/outputs
+mpsc_output
