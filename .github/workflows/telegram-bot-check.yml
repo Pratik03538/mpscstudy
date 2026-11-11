@@ -30,5 +30,8 @@ jobs:
           python -m pip install -r telegram_bot/miniapp/requirements.txt
       - name: Compile Python files
         run: python -m compileall -q telegram_bot/bot telegram_bot/miniapp
+      - name: Validate Oracle Cloud install script
+        if: runner.os == 'Linux'
+        run: bash -n telegram_bot/deploy/oracle/install.sh
       - name: Test SQLite schemas
         run: python -m unittest discover -s telegram_bot/tests -v
