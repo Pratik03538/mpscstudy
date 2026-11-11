@@ -17,6 +17,7 @@ def initialize_battle_schema(path: Path) -> None:
         for name, declaration in (
             ("deadline_at", "REAL"),
             ("result_posted_at", "REAL"),
+            ("engine_version", "INTEGER NOT NULL DEFAULT 1"),
         ):
             if name not in columns:
                 con.execute(f"ALTER TABLE battles ADD COLUMN {name} {declaration}")
@@ -47,7 +48,8 @@ def initialize_battle_schema(path: Path) -> None:
         # safely continue under the new per-player Mini App state machine.
         con.execute("""
             UPDATE battles SET status='aborted',finished_at=COALESCE(finished_at,?)
-            WHERE status IN ('accepted','active')
+            WHERE engine_version < 2
+              AND status IN ('accepted','countdown','active')
               AND NOT EXISTS (
                 SELECT 1 FROM battle_players bp WHERE bp.battle_id=battles.battle_id
               )
