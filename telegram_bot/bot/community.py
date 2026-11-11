@@ -1181,6 +1181,48 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.inline_query.answer(results[:20], cache_time=10, is_personal=True)
 
 
+def _recover_battle_jobs(application: Application) -> None:
+    if not application.job_queue:
+        return
+    now = _now()
+    with state_connection(STATE_DB) as con:
+        rows = con.execute("""
+            SELECT battle_id,status,created_at,accepted_at,deadline_at
+            FROM battles
+            WHERE status IN ('open','pending_approval','accepted','countdown','active')
+            ORDER BY created_at
+        """).fetchall()
+    for row in rows:
+        battle_id = row["battle_id"]
+        status = row["status"]
+        if status == "open":
+            when = max(1, float(row["created_at"]) + OPEN_CHALLENGE_TTL - now)
+            application.job_queue.run_once(
+                expire_open_battle, when=when, data={"battle_id": battle_id},
+                name=f"battle-open-recovery-{battle_id}",
+            )
+        elif status == "pending_approval":
+            when = max(1, float(row["accepted_at"] or now) + START_CONFIRM_TTL - now)
+            application.job_queue.run_once(
+                expire_pending_approval, when=when, data={"battle_id": battle_id},
+                name=f"battle-approval-recovery-{battle_id}",
+            )
+        elif status == "accepted":
+            when = max(1, float(row["accepted_at"] or now) + START_CONFIRM_TTL - now)
+            application.job_queue.run_once(
+                expire_unstarted_battle, when=when, data={"battle_id": battle_id},
+                name=f"battle-start-recovery-{battle_id}",
+            )
+        elif status == "countdown":
+            application.create_task(_begin_battle_after_countdown(application, battle_id))
+        elif status == "active":
+            when = max(1, float(row["deadline_at"] or (now + BATTLE_DURATION_SECONDS)) - now)
+            application.job_queue.run_once(
+                battle_deadline_job, when=when, data={"battle_id": battle_id},
+                name=f"battle-deadline-recovery-{battle_id}",
+            )
+
+
 async def setup_daily_jobs(application: Application) -> None:
     global BOT_USERNAME
     try:
@@ -1194,6 +1236,7 @@ async def setup_daily_jobs(application: Application) -> None:
         publish_completed_battles_job, interval=5, first=5,
         name="publish-completed-battle-results",
     )
+    _recover_battle_jobs(application)
     if not CHANNEL_ID:
         logger.warning("PUBLIC_CHANNEL_ID is not set; daily channel events are disabled.")
         return
