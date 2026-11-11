@@ -47,7 +47,7 @@ def initialize_battle_schema(path: Path) -> None:
         # safely continue under the new per-player Mini App state machine.
         con.execute("""
             UPDATE battles SET status='aborted',finished_at=COALESCE(finished_at,?)
-            WHERE status IN ('accepted','countdown','active')
+            WHERE status IN ('accepted','active')
               AND NOT EXISTS (
                 SELECT 1 FROM battle_players bp WHERE bp.battle_id=battles.battle_id
               )
