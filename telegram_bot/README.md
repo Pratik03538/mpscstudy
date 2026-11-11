@@ -104,6 +104,10 @@ See [miniapp/README.md](miniapp/README.md). The Mini App must be deployed over H
 - A bot cannot initiate private messages to users who have never started it.
 - The Mini App is included as runnable code but is not automatically hosted or deployed by a GitHub commit.
 
+## Oracle Cloud Always Free deployment
+
+For a single-VM deployment of the Telegram bot and Mini App with shared SQLite storage, follow [the Oracle Cloud Always Free guide](deploy/oracle/README.md). It includes the Ubuntu install script, systemd services, Nginx reverse proxy, HTTPS setup, and Windows database upload commands.
+
 ## Connection troubleshooting
 
 Run:
