@@ -805,12 +805,13 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     played = int(totals["battles_played"]) if totals else 0
     wins = int(totals["wins"]) if totals else 0
     accuracy = (100 * stats["correct"] / stats["answered"]) if stats["answered"] else 0
+    points = int(totals["correct_total"]) * 100 if totals else 0
     text = (
         f"👤 <b>{_esc(user.full_name)}</b>\n"
         f"Telegram ID: <code>{user.id}</code>\n\n"
         f"📚 Practice: <b>{stats['quizzes']} quizzes</b> · {stats['answered']} questions\n"
         f"🎯 Accuracy: <b>{accuracy:.1f}%</b>\n"
-        f"⚔️ Battles: <b>{played}</b> · Wins: <b>{wins}</b>"
+        f"⚔️ Battles: <b>{played}</b> · Wins: <b>{wins}</b> · Points: <b>{points}</b>"
     )
     rows = []
     if MINI_APP_URL and update.effective_chat and update.effective_chat.type == ChatType.PRIVATE:
@@ -835,7 +836,8 @@ async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     lines = ["🏆 <b>COMMUNITY BATTLE LEADERBOARD</b>"]
     for index, row in enumerate(rows, 1):
         name = ("@" + row["username"]) if row["username"] else row["display_name"]
-        lines.append(f"{index}. {_esc(name)} — {row['wins']} wins / {row['battles_played']} battles")
+        points = int(row["correct_total"]) * 100
+        lines.append(f"{index}. {_esc(name)} — {points} pts · {row['wins']} wins / {row['battles_played']} battles")
     lines.append("\n<i>Only real completed player battles count here. Official channel-event ranking is separate.</i>")
     await update.effective_message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
