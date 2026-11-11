@@ -30,6 +30,7 @@ class CommunitySchemaTests(unittest.TestCase):
                     "quiz_sessions", "quiz_session_questions",
                     "community_profiles", "battles", "battle_questions",
                     "battle_answers", "battle_player_totals", "battle_awards",
+                    "battle_players", "battle_declined_users",
                     "official_events", "official_event_questions", "official_event_answers",
                 }
                 self.assertTrue(expected.issubset(names), expected - names)
