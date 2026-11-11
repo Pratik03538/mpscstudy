@@ -399,28 +399,47 @@ async def expire_open_battle(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.exception("Could not update expired challenge card %s", battle_id)
 
 
+async def expire_pending_approval(context: ContextTypes.DEFAULT_TYPE) -> None:
+    battle_id = context.job.data["battle_id"]
+    battle = _get_battle(battle_id)
+    if not battle or battle["status"] != "pending_approval":
+        return
+    with state_connection(STATE_DB) as con:
+        con.execute("""
+            INSERT OR IGNORE INTO battle_declined_users(battle_id,user_id,declined_at)
+            VALUES(?,?,?)
+        """, (battle_id, str(battle["opponent_id"]), _now()))
+        con.execute("""
+            UPDATE battles SET status='open',opponent_id=NULL,opponent_name=NULL,accepted_at=NULL
+            WHERE battle_id=? AND status='pending_approval'
+        """, (battle_id,))
+    updated = _get_battle(battle_id)
+    try:
+        await _edit_battle(
+            context.bot, updated,
+            "⌛ <b>APPROVAL TIMED OUT</b>\nThe challenge is open for another opponent.",
+            _battle_keyboard(updated),
+        )
+    except Exception:
+        logger.exception("Could not reopen challenge after approval timeout %s", battle_id)
+
+
 async def expire_unstarted_battle(context: ContextTypes.DEFAULT_TYPE) -> None:
     battle_id = context.job.data["battle_id"]
     battle = _get_battle(battle_id)
-    if not battle or battle["status"] not in ("pending_approval", "accepted"):
+    if not battle or battle["status"] != "accepted":
         return
-    if battle["status"] == "pending_approval":
-        with state_connection(STATE_DB) as con:
-            con.execute("""
-                UPDATE battles SET status='open',opponent_id=NULL,opponent_name=NULL,accepted_at=NULL
-                WHERE battle_id=? AND status='pending_approval'
-            """, (battle_id,))
-        message = "⌛ <b>APPROVAL TIMED OUT</b>\nThe challenge is open for another opponent."
-    else:
-        with state_connection(STATE_DB) as con:
-            con.execute(
-                "UPDATE battles SET status='expired',finished_at=? WHERE battle_id=? AND status='accepted'",
-                (_now(), battle_id),
-            )
-        message = "⌛ <b>BATTLE NOT STARTED</b>\nBoth players did not confirm Start in time."
-    battle = _get_battle(battle_id)
+    with state_connection(STATE_DB) as con:
+        con.execute(
+            "UPDATE battles SET status='expired',finished_at=? WHERE battle_id=? AND status='accepted'",
+            (_now(), battle_id),
+        )
+    updated = _get_battle(battle_id)
     try:
-        await _edit_battle(context.bot, battle, message, _battle_keyboard(battle))
+        await _edit_battle(
+            context.bot, updated,
+            "⌛ <b>BATTLE NOT STARTED</b>\nBoth players did not confirm Start in time.",
+        )
     except Exception:
         logger.exception("Could not update unstarted challenge card %s", battle_id)
 
@@ -494,7 +513,7 @@ async def _accept_battle(query, battle_id: str, user, application: Application) 
     )
     if application.job_queue:
         application.job_queue.run_once(
-            expire_unstarted_battle, when=START_CONFIRM_TTL,
+            expire_pending_approval, when=START_CONFIRM_TTL,
             data={"battle_id": battle_id}, name=f"battle-approval-expiry-{battle_id}",
         )
     return "Your acceptance was sent to the challenger for approval."
