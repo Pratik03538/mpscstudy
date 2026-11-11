@@ -92,7 +92,7 @@ The bot process is waiting for `/data/mpsc_subject_only.db`; it starts automatic
 
 ## 6. Connect the Telegram Mini App
 
-1. In `@BotFather`, create a named Mini App for the bot and use the generated Railway HTTPS domain as its URL.
+1. In `@BotFather`, open `/mybots` → select your bot → Bot Settings → Configure Mini App, then create/configure the named Mini App and use the generated Railway HTTPS domain as its URL.
 2. Record the exact Mini App short name.
 3. Add the two service variables:
    - `MINI_APP_URL=https://YOUR-RAILWAY-DOMAIN`
