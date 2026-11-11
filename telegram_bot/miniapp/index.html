@@ -62,7 +62,7 @@
   <section class="grid">
     <div class="card"><div class="muted">PRACTICE QUESTIONS</div><div class="metric" id="answered">—</div><div class="muted">Attempted</div></div>
     <div class="card"><div class="muted">ACCURACY</div><div class="metric" id="accuracy">—</div><div class="muted">Practice answers</div></div>
-    <div class="card"><div class="muted">BATTLE WINS</div><div class="metric" id="wins">—</div><div class="muted">Community matches</div></div>
+    <div class="card"><div class="muted">BATTLE WINS</div><div class="metric" id="wins">—</div><div class="muted" id="battlePoints">Battle points: —</div></div>
     <div class="card"><div class="muted">OFFICIAL EVENTS</div><div class="metric" id="events">—</div><div class="muted">Entered</div></div>
   </section>
   <nav class="tabs">
@@ -103,7 +103,7 @@
     if(!items?.length) return '<div class="empty">No verified results yet. Be the first to compete.</div>';
     return items.map((x,i)=>{
       const detail = kind==="official" ? `${x.correct}/${x.answered} · ${x.points} pts` :
-        kind==="community" ? `${x.wins} wins · ${x.battles} battles` :
+        kind==="community" ? `${x.points} pts · ${x.wins} wins · ${x.battles} battles` :
         `${x.status} · ${x.subject} · ${x.points} pts`;
       const action = kind==="battles" && x.status==="completed"
         ? '<button class="history-open" data-history="'+escapeHtml(x.id)+'">Full history</button>' : "";
@@ -238,6 +238,7 @@
       $("answered").textContent=p.practice.answered.toLocaleString();
       $("accuracy").textContent=p.practice.accuracy+"%";
       $("wins").textContent=p.battles.wins.toLocaleString();
+      $("battlePoints").textContent="Battle points: "+(p.battles.correct_answers*100).toLocaleString();
       $("events").textContent=p.official_events_entered.toLocaleString();
       const subjects=p.subjects||[];
       $("subjects").innerHTML=subjects.length?subjects.map(s=>`<div class="subject"><div class="subject-head"><b>${escapeHtml(s.name)}</b><span>${s.accuracy}% · ${s.answered} attempted</span></div><div class="bar"><span style="width:${Math.max(0,Math.min(100,s.accuracy))}%"></span></div></div>`).join(""):'<div class="empty">No subject practice recorded yet.</div>';
