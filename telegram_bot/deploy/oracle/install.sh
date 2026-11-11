@@ -34,7 +34,8 @@ python3 -m venv "$APP_DIR/.venv"
 "$APP_DIR/.venv/bin/python" -m pip install -r "$APP_DIR/telegram_bot/requirements.txt"
 "$APP_DIR/.venv/bin/python" -m pip install -r "$APP_DIR/telegram_bot/miniapp/requirements.txt"
 
-mkdir -p "$APP_DIR/telegram_bot/database" "$APP_DIR/telegram_bot/data" /var/lib/mpsc-study
+mkdir -p "$APP_DIR/telegram_bot/database" "$APP_DIR/telegram_bot/data"
+sudo mkdir -p /var/lib/mpsc-study
 sudo chown -R "$APP_USER:$APP_USER" "$APP_DIR" /var/lib/mpsc-study
 
 sudo install -m 0644 "$SCRIPT_DIR/mpsc-bot.service" /etc/systemd/system/mpsc-bot.service
