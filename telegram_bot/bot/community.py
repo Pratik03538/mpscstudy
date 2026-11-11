@@ -345,8 +345,8 @@ def _create_battle_record(
         con.execute("""
             INSERT INTO battles(
                 battle_id,chat_id,inline_message_id,challenger_id,challenger_name,
-                subject_id,subject_name,status,total_questions,created_at
-            ) VALUES(?,?,?,?,?,?,?,'open',?,?)
+                subject_id,subject_name,status,total_questions,created_at,engine_version
+            ) VALUES(?,?,?,?,?,?,?,'open',?,?,2)
         """, (
             battle_id, chat_id, inline_message_id, str(creator.id),
             ("@" + creator.username) if creator.username else creator.full_name,
